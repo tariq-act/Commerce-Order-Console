@@ -40,10 +40,23 @@ export async function apiGet<T>(
 
 // A failed write is never retried here: a lost response may follow a commit.
 export async function apiPost<T>(path: string, body: unknown, schema: z.ZodType<T>): Promise<T> {
+  return apiWrite("POST", path, body, schema);
+}
+
+export async function apiPatch<T>(path: string, body: unknown, schema: z.ZodType<T>): Promise<T> {
+  return apiWrite("PATCH", path, body, schema);
+}
+
+async function apiWrite<T>(
+  method: "POST" | "PATCH",
+  path: string,
+  body: unknown,
+  schema: z.ZodType<T>,
+): Promise<T> {
   let response: Response;
   try {
     response = await fetch(path, {
-      method: "POST",
+      method,
       cache: "no-store",
       headers: { Accept: "application/json", "Content-Type": "application/json" },
       body: JSON.stringify(body),

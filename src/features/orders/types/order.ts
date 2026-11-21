@@ -1,5 +1,5 @@
 import { z } from "zod";
-import type { OrderStatus } from "@/db/types";
+import type { Order, OrderStatus } from "@/db/types";
 import type { OrderSummary, OrderDetails, OrderPage } from "@/services/order-query.service";
 import type { CreateOrderInput } from "@/lib/validations/order";
 
@@ -68,6 +68,10 @@ export const orderDetailsSchema = orderSummarySchema.extend({
     }),
   ),
 }) satisfies z.ZodType<OrderDetailsResponse>;
+export type UpdatedOrderResponse = WithJsonDate<Omit<Order, "updatedAt">> & { updatedAt: string };
+export const updatedOrderSchema = orderSummarySchema.extend({
+  updatedAt: z.iso.datetime(),
+}) satisfies z.ZodType<UpdatedOrderResponse>;
 export const orderPageSchema = z
   .object({
     orders: z.array(orderSummarySchema),

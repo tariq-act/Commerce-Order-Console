@@ -1,6 +1,6 @@
 # Fynd Commerce Order Console
 
-Fynd Hiring Hackathon Commerce Order Console with a complete backend and a responsive frontend foundation. It provides a product catalogue, atomic order placement, order search and details, fulfilment, cancellation with exactly-once stock restoration, and inventory movement history. The dashboard displays live order metrics, recent orders, and low-stock products from SQLite. The product catalogue supports live browsing, search, stock filters, and read-only product details. The create-order workflow supports a stock-aware multi-product cart and server-confirmed checkout. Order management supports a live searchable, filtered, paginated list. Order details and inventory feature pages remain placeholders for subsequent integration steps.
+Fynd Hiring Hackathon Commerce Order Console with a complete backend and a responsive frontend. It provides a product catalogue, atomic order placement, order search and details, fulfilment, cancellation with exactly-once stock restoration, and inventory movement history. The dashboard displays live order metrics, recent orders, and low-stock products from SQLite. The product catalogue supports live browsing, search, stock filters, and read-only product details. The create-order workflow supports a stock-aware multi-product cart and server-confirmed checkout. Order management supports a live searchable, filtered, paginated list. Order details show historical prices, status progress, fulfilment actions and confirmed cancellation. Inventory shows current stock, stock status, latest movements and paginated product history.
 
 ## Technology stack
 
@@ -46,20 +46,20 @@ Apply migrations before starting the server. Startup does not migrate or seed au
 
 ## Frontend foundation
 
-| Route          | Current interface                                                         |
-| -------------- | ------------------------------------------------------------------------- |
-| `/dashboard`   | Live KPI cards, five recent orders, low-stock products, and quick actions |
-| `/products`    | Live catalogue, debounced search, stock filters, and product details      |
-| `/orders`      | Live order list with reference/status filters and pagination              |
-| `/orders/new`  | Product selection, cart, validated checkout, and confirmation             |
-| `/orders/[id]` | Order details placeholder (no data lookup or ID validation yet)           |
-| `/inventory`   | Inventory placeholder                                                     |
+| Route          | Current interface                                                                |
+| -------------- | -------------------------------------------------------------------------------- |
+| `/dashboard`   | Live KPI cards, five recent orders, low-stock products, and quick actions        |
+| `/products`    | Live catalogue, debounced search, stock filters, and product details             |
+| `/orders`      | Live order list with reference/status filters and pagination                     |
+| `/orders/new`  | Product selection, cart, validated checkout, and confirmation                    |
+| `/orders/[id]` | Live order details, historical prices, status progress and fulfilment actions    |
+| `/inventory`   | Live stock overview, search, stock-status filters and inventory movement history |
 
 The shared layout provides a collapsible desktop sidebar, breadcrumbs, profile and notification menus, a workspace guide, and a mobile navigation dialog below 1024px. Sidebar collapse preference is stored locally in the browser. The profile represents the local workspace; authentication and notification delivery are not implemented.
 
 Design tokens live in `src/app/globals.css`. Reusable components include Button, Input, Select, Card, Badge, Table, Dialog, DropdownMenu, Skeleton, EmptyState, PageHeader, and OrderStatusBadge. Dialogs, menus, and selects use Radix keyboard/focus handling. The shell includes semantic landmarks, a skip link, labelled icon controls, responsive grids, and reduced-motion support. System fonts keep builds independent of external font services.
 
-Use `npm run dev` and open the localhost URL printed by Next.js. Production builds use Next.js's supported Webpack compiler because the restricted local environment prevents Turbopack's CSS worker from binding its internal port. This does not change API contracts. Verify the layout at desktop, tablet, and mobile widths, open the mobile navigation and menus, and check the placeholder links. The dashboard is read-only. The product catalogue and dashboard are read-only. Order creation is implemented; order details and inventory feature pages remain placeholders.
+Use `npm run dev` and open the localhost URL printed by Next.js. Production builds use Next.js's supported Webpack compiler because the restricted local environment prevents Turbopack's CSS worker from binding its internal port. This does not change API contracts. Verify the layout at desktop, tablet, and mobile widths, open the mobile navigation and menus, and check route links. The product catalogue, dashboard and inventory are read-only. Order creation, listing, details, fulfilment and cancellation are implemented.
 
 ## Product catalogue
 
@@ -77,7 +77,7 @@ Open `/orders/new`. The product selector reuses `GET /api/products` with a 300 m
 
 The cart previews line subtotals, total units, subtotal and estimated total with integer paise arithmetic. Price/quantity overflow disables checkout. The search is outside the checkout form, so Enter in search cannot place an order. Mobile layouts provide a Cart jump link; desktop layouts show selection and cart side by side.
 
-Only `{ items: [{ productId, quantity }] }` is sent to `POST /api/orders`. Client prices and stock are never submitted. The existing backend transaction calculates final prices, validates inventory and writes the order. A validated successful response displays the actual order reference, stored item prices, confirmed total, and a link to `/orders/[id]`. Success shows a Sonner notification, clears the cart, and invalidates products, orders, inventory and dashboard queries. Order details still use the existing placeholder route until the corresponding UI step.
+Only `{ items: [{ productId, quantity }] }` is sent to `POST /api/orders`. Client prices and stock are never submitted. The existing backend transaction calculates final prices, validates inventory and writes the order. A validated successful response displays the actual order reference, stored item prices, confirmed total, and a link to `/orders/[id]`. Success shows a Sonner notification, clears the cart, and invalidates products, orders, inventory and dashboard queries.
 
 Cart controls and checkout lock during submission, with an additional synchronous guard against repeated clicks. Writes have no automatic retries or offline queue, and a 20-second timeout. HTTP 400/404/409/500 and network failures preserve the cart on the current page. Stock conflicts refresh product queries so unavailable entries can be adjusted or removed. A lost or unreadable response is treated as an uncertain outcome, with guidance to check orders before manually retrying. The existing API has no idempotency-key contract; the UI does not claim exactly-once creation across network failures. Cart state is in memory; navigation or reload starts a fresh cart.
 
@@ -91,9 +91,27 @@ Search by reference debounces for 300 ms. Status choices are All, PLACED, PACKED
 
 The existing list endpoint does not return item counts. The UI queries `/api/orders/[id]` only for visible rows and sums historical item quantities into total units using safe integer arithmetic. Details are cached under `['orders', 'detail', id]`; page/filter changes cancel unused reads. Each count has its own loading/error/retry state; failed reads display Unavailable rather than zero. Refresh updates both active list and detail queries. At the default page size this uses one list request plus up to 20 detail requests, with cache reuse on return visits. No backend API/contract was changed to add counts.
 
-The table shares the existing status badges, INR formatter, IST dates and design-system components. Loading skeletons, no-match and genuinely empty states, full-list retry, per-row count retry, and contained horizontal table scrolling support desktop and mobile use. Create Order opens `/orders/new`; reference and View links open `/orders/[id]`, which remains the existing placeholder until the details UI step.
+The table shares the existing status badges, INR formatter, IST dates and design-system components. Loading skeletons, no-match and genuinely empty states, full-list retry, per-row count retry, and contained horizontal table scrolling support desktop and mobile use. Create Order opens `/orders/new`; reference and View links open the live details page at `/orders/[id]`.
 
 Order response types reuse the backend's `OrderSummary`, `OrderPage` and `OrderDetails` types with JSON timestamp conversion. Runtime Zod schemas check the observed response contracts. The existing TanStack Query provider and API client are reused, with no new dependencies or backend business logic changes.
+
+## Order details and fulfilment
+
+Open `/orders/[id]` to view the reference, creation date/time in IST, current status, product names/SKUs, quantities, historical unit prices, stored line subtotals and order total in INR. The page uses the existing `GET /api/orders/[id]` and shares the list's detail cache. The timeline shows status progression; the API supplies no event timestamps or pre-cancellation packing history, so neither is invented.
+
+Mark as packed is enabled only for `PLACED`; Mark as shipped only for `PACKED`. Cancel is enabled only for `PLACED` or `PACKED` and opens a keyboard-accessible confirmation dialog focused initially on Keep order. Confirmation sends `POST /api/orders/[id]/cancel`; fulfilment sends `PATCH /api/orders/[id]/status` with only `{ status: "PACKED" }` or `{ status: "SHIPPED" }`. The backend remains authoritative. All mutation controls are disabled while writing or refreshing status, and a synchronous guard prevents duplicate submission before React rerenders. Writes are never automatically retried.
+
+Success updates the shared detail cache without replacing historical items and invalidates order, product, inventory and dashboard queries. Failures display safe Sonner messages and refresh affected caches, including when a lost response leaves the write outcome uncertain. A failed cancellation keeps its confirmation dialog open. Loading skeletons, invalid-ID and not-found views, API retry states, and contained table scrolling handle desktop and mobile use. No backend logic or contracts changed and no dependencies were added.
+
+## Inventory management
+
+Open `/inventory` to view product names/SKUs, current stock, stock status and the latest recorded movement. Name/SKU search debounces by 300 ms. All, In stock, Low stock and Out of stock filters are mutually exclusive. Low stock means a positive stock quantity at or below `DASHBOARD_LOW_STOCK_THRESHOLD` (default 5); zero always means Out of stock. In stock means above that threshold. The server page validates and passes the same configured threshold used by the dashboard. A zero threshold disables low-stock alerts.
+
+The page reads `GET /api/inventory`, reusing existing search and availability parameters. Because this endpoint is unpaginated, the UI can accurately apply the low-stock boundary to every matching record without adding an API parameter. Search and stock filter state stay local to this page. Latest movements use cached `GET /api/inventory/[productId]/movements?page=1&limit=1` requests only for visible rows, with independent loading/error/retry states; an empty response says No movements yet and a failed read says Unavailable.
+
+History opens a responsive dialog using both `GET /api/inventory/[productId]` and the paginated movement endpoint. It shows current stock, availability, INR price, movement type, signed quantity (negative for order placement, positive for cancellation), linked order reference and date/time in IST. History uses the API's newest-first order and 20-row pages with previous/next controls and total/page counts. Reopening a product starts at page one, and closing returns focus to its History button. No-history, missing-product, loading and safe API error/retry states are included.
+
+Refresh invalidates the entire `inventory` query prefix, updating active list, detail and movement queries. Existing order creation/cancellation hooks already invalidate this prefix, so navigation back to inventory reads updated stock and history. GET requests never change stock or create movements. No manual adjustment, new backend API, dependency, business logic or schema change is introduced. Implementation lives in `src/features/inventory/` and reuses the shared API client, backend inventory types, product search/error/skeleton components and shadcn/ui primitives.
 
 ## Environment configuration
 
@@ -593,7 +611,7 @@ An existing product with no movements returns 200 with an empty array and zero c
 - Cancellation allows only `PLACED`/`PACKED` to become `CANCELLED`, adding quantities to current stock and recording `ORDER_CANCELLED` once per order/product.
 - Immediate locking, conditional updates, and unique movement keys protect concurrent mutations. Timeouts return 409 without partial changes; cancellation also guards stock overflow.
 - Cancellation preserves items, original movements, price snapshots, totals, references, and creation timestamps. Product price changes never alter previous orders.
-- GET endpoints never mutate stock or create movements. No manual stock adjustment, product mutation, or order deletion is implemented. The dashboard, product catalogue, order creation, and order listing use real backend data; order details and inventory pages remain placeholders.
+- GET endpoints never mutate stock or create movements. No manual stock adjustment, product mutation, or order deletion is implemented. The dashboard, product catalogue, order creation, order listing, details, fulfilment, cancellation and inventory use real backend data.
 
 ## Testing and verification
 
@@ -633,5 +651,9 @@ Step 10.3 verification passed 288 automated tests, including nine catalogue URL/
 Step 10.4 verification passed 304 automated tests, including 16 new cart/client/rendering/integration checks, and all 11 production integration tests (56 HTTP requests). Strict TypeScript, production build, and formatting passed. Browser checks covered name/SKU search, multiple products, repeated additions, increment/decrement, removal, out-of-stock controls, stock limits, exact totals, cart preservation after real 409 and injected 500/network failures, a delayed double-click submission producing exactly one order, confirmed reference/prices, success notification, cart clearing, refreshed inventory/dashboard, details-route navigation, and phone/tablet/desktop layouts. Search was separated from checkout to prevent Enter from submitting; a regression test also covers quantity recovery after a stock drop. All checkout writes and fault injection used an isolated SQLite database and temporary local servers, which were stopped afterward. Development order count remained unchanged during browser keyboard checks. No backend defect or business logic/schema change was required.
 
 Step 10.5 verification passed 317 automated tests, including 13 new order listing validation, URL, API, and rendering checks against isolated SQLite fixtures, and all 11 production integration tests (56 HTTP requests). Strict TypeScript, production build, formatting, and whitespace checks passed. Browser checks covered live order records, exact and unmatched reference searches, all four status filters, combined filters, pagination and page sizes, URL preservation and Back navigation, historical totals and total units, loading states, individual item-count failures and retry, list API failure and recovery, an empty database, out-of-range pages, create/details navigation, and phone/tablet/desktop layouts. Failure and empty-state checks used a temporary SQLite database, and its preview server was stopped afterward. No backend business logic, schema, or dependencies changed. Order details links reach the existing placeholder page; a complete details UI is reserved for a later step.
+
+Step 10.6 verification passed all 338 automated tests, including 21 new detail/client/cache/rendering/transition tests against isolated SQLite fixtures. The complete suite includes every valid and invalid backend status transition, concurrent mutations, rollback, duplicate restoration and historical price checks. TypeScript and the production build passed. Browser checks against a separate production preview verified packing, shipping, cancellation from both allowed states, Keep order and focus restoration, terminal disabled states, a real stale-status 409 with Sonner feedback, a failed cancellation with unchanged stock/movements and an open dialog followed by successful retry, missing/invalid IDs, detail API failure/retry, historical prices after a product price change, and phone/tablet/desktop layouts. No development order was mutated. No backend logic, schema, contract or dependency changes were needed.
+
+Step 10.7 verification passed all 351 automated tests, including 13 new inventory UI/client/cache/contract tests. TypeScript and the production build passed. Browser checks covered the six real products, name/SKU and no-match searches, all stock statuses with the five-unit boundary, current inventory details, no-history records, 20-row movement pagination, order links, focus restoration, list/history failures and retry, an empty database, and desktop/tablet/phone layouts. An order placed through the UI changed mouse stock from 25 to 23 and created one deduction; cancelling it restored stock to 25 and created exactly one restoration, with cached inventory and history refreshed on navigation. After repeated GET checks, the isolated database retained exactly 26 unique movements with no duplicate restoration. A production restart using threshold 8 verified the request-time inventory configuration and matching dashboard API value; a separate HTTP check confirmed the inventory was genuinely empty. Temporary database faults were restored and test servers stopped. No backend API, schema, business logic, dependency or development inventory changed.
 
 The final dependency audit reports zero runtime findings and four moderate findings in Drizzle Kit's development-only esbuild chain. npm proposes a breaking downgrade, so working migration tooling is retained. A compatible upstream resolution remains outstanding. Authentication, custom CORS, remaining frontend workflows, and general production hardening are outside the implemented hackathon scope.
