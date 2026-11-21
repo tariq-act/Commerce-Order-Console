@@ -1,6 +1,6 @@
 # Commerce Order Console backend setup
 
-Steps 1 through 7 provide the SQLite schema, database infrastructure, repeatable product seeding, product REST APIs, transactional order creation, order listing/details, fulfilment, cancellation, and read-only inventory/history APIs for the Fynd Hiring Hackathon. The workspace was empty, so this project includes a minimal Next.js App Router configuration with strict TypeScript. Frontend components are deferred to later steps. The application can run and build with API routes only.
+Steps 1 through 8 provide the SQLite schema, database infrastructure, repeatable product seeding, product REST APIs, transactional order creation, order listing/details, fulfilment, cancellation, read-only inventory/history APIs, and a backend integration audit for the Fynd Hiring Hackathon. The workspace was empty, so this project includes a minimal Next.js App Router configuration with strict TypeScript. Frontend components are deferred to later steps. The application can run and build with API routes only.
 
 ## Setup and commands
 
@@ -17,18 +17,19 @@ npm test
 
 The database defaults to `./data/commerce.db`. To change it, copy `.env.example` to `.env.local` and set `DATABASE_PATH` to a local file path. Relative paths resolve from the project root. Environment files follow Next.js loading rules; the same configuration is used by application code, migrations, and Drizzle Studio. Database files and local environment files are ignored by Git. The migration SQL and its metadata must be committed.
 
-| Command                                     | Purpose                                                                                    |
-| ------------------------------------------- | ------------------------------------------------------------------------------------------ |
-| `npm run db:generate -- --name=description` | Generate a migration after changing the schema                                             |
-| `npm run db:migrate`                        | Apply pending migrations using the configured connection                                   |
-| `npm run db:seed`                           | Insert the six initial products, skipping SKUs that already exist                          |
-| `npm run db:inspect`                        | List tables, indexes, row counts, and foreign key integrity                                |
-| `npm run db:studio`                         | Open Drizzle Studio for database inspection                                                |
-| `npm run db:verify`                         | Read-check the application database and test constraints in an isolated in-memory database |
-| `npm run typecheck`                         | Run the strict TypeScript check                                                            |
-| `npm test`                                  | Run product and order tests against migrated, seeded temporary SQLite databases            |
-| `npm run format`                            | Format source, tests, configuration, and documentation with Prettier                       |
-| `npm run format:check`                      | Check formatting without modifying files                                                   |
+| Command                                     | Purpose                                                                                      |
+| ------------------------------------------- | -------------------------------------------------------------------------------------------- |
+| `npm run db:generate -- --name=description` | Generate a migration after changing the schema                                               |
+| `npm run db:migrate`                        | Apply pending migrations using the configured connection                                     |
+| `npm run db:seed`                           | Insert the six initial products, skipping SKUs that already exist                            |
+| `npm run db:inspect`                        | List tables, indexes, row counts, and foreign key integrity                                  |
+| `npm run db:studio`                         | Open Drizzle Studio for database inspection                                                  |
+| `npm run db:verify`                         | Read-check the application database and test constraints in an isolated in-memory database   |
+| `npm run typecheck`                         | Run the strict TypeScript check                                                              |
+| `npm test`                                  | Run product and order tests against migrated, seeded temporary SQLite databases              |
+| `npm run test:integration`                  | Build and run the production HTTP workflow/restart audit against a temporary SQLite database |
+| `npm run format`                            | Format source, tests, configuration, and documentation with Prettier                         |
+| `npm run format:check`                      | Check formatting without modifying files                                                     |
 
 Prettier is pinned in the development dependencies. Formatting uses two-space indentation, double quotes, semicolons, trailing commas, and a 100-column target. Generated Next.js files, database files, migration artifacts, and the npm lockfile are excluded through `.prettierignore`. Editor integrations can use the project-local Prettier installation and `.prettierrc.json`.
 
@@ -222,3 +223,21 @@ Money is stored in integer cents. Database checks require non-negative integer m
 Timestamps are stored as Unix milliseconds and mapped to JavaScript `Date` values. Database creation defaults have one-second precision. Drizzle refreshes `updatedAt` on ORM updates unless a value is explicitly supplied; direct SQL writers must set `updatedAt` themselves.
 
 Order placement calculates totals, deducts stock, and writes inventory movements through its transaction. Fulfilment changes only allowed statuses. Cancellation restores item quantities and records inventory movements in one transaction without modifying historical prices or totals.
+
+## Backend audit
+
+The November 21, 2026 audit executed `npm test` (245 passing tests) and `npm run test:integration` (10 passing tests covering 55 real HTTP requests). The integration command builds the production application, starts it on an available localhost port with a temporary SQLite file, and restarts it against the same file. It requires permission to listen on localhost. Development rows are read before and after and verified unchanged; temporary files and server processes are removed when testing finishes.
+
+`tests/integration/backend.test.ts` runs the required workflows in order against one database:
+
+- Workflow A orders two mice, verifies stock 25 to 23, retrieves details, packs and ships, rejects cancellation, and verifies stock remains 23.
+- Workflow B orders three mice from the remaining 23, verifies 20, cancels back to 23, rejects a second cancellation, and verifies exactly one cancellation movement for that order/product.
+- Workflow C submits two available products and an out-of-stock webcam, rejects the whole order, and verifies every product, order, item, and movement row is unchanged.
+
+Additional integration checks inject late placement/cancellation failures, verify safe HTTP 500 responses and complete rollback, verify successful cancellation retry, change current prices while checking historical snapshots, repeat migrations/seeding without resetting inventory, and verify statuses/stock/prices/items/movements after an application process restart. The existing suite also reruns real separate-process order/cancellation contention and shipping/cancellation races.
+
+The integration suite invokes the existing database verifier: all four tables, connection foreign keys, repeat migration safety, and 41 invalid-write constraint checks passed. `PRAGMA foreign_key_check` returned no violations and `PRAGMA integrity_check` returned `ok`. Drizzle's migration consistency check passed, and schema generation reported no changes to migrate. Strict TypeScript checks, formatting checks, and the production build passed.
+
+No business-logic defect was reproduced, no missing required constraint or incorrect transaction boundary was found, and no production service rewrite was needed. The audit closes the missing repeatable full-workflow/restart coverage with the integration suite and command. Existing services centralize stock mutation and movement creation. Order listing and movement history use bounded pagination; joins and read snapshots avoid per-item queries and inconsistent multi-query responses.
+
+The dependency audit reports zero runtime findings with `npm audit --omit=dev`. The full `npm audit` still reports four moderate findings in Drizzle Kit's development-only esbuild dependency chain. Its proposed fix is a breaking downgrade of Drizzle Kit, so the working migration tooling is retained and these findings remain open. Backend behavior is ready for frontend integration and the local hackathon demo within the tested scope. Deployment requires the existing Node.js runtime and a persistent writable SQLite filesystem.
