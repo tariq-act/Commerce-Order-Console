@@ -1,6 +1,6 @@
 # Fynd Commerce Order Console
 
-Fynd Hiring Hackathon Commerce Order Console with a complete backend and a responsive frontend foundation. It provides a product catalogue, atomic order placement, order search and details, fulfilment, cancellation with exactly-once stock restoration, and inventory movement history. The dashboard displays live order metrics, recent orders, and low-stock products from SQLite. The product catalogue supports live browsing, search, stock filters, and read-only product details. The create-order workflow supports a stock-aware multi-product cart and server-confirmed checkout. Order listing/details and inventory feature pages remain placeholders for subsequent integration steps.
+Fynd Hiring Hackathon Commerce Order Console with a complete backend and a responsive frontend foundation. It provides a product catalogue, atomic order placement, order search and details, fulfilment, cancellation with exactly-once stock restoration, and inventory movement history. The dashboard displays live order metrics, recent orders, and low-stock products from SQLite. The product catalogue supports live browsing, search, stock filters, and read-only product details. The create-order workflow supports a stock-aware multi-product cart and server-confirmed checkout. Order management supports a live searchable, filtered, paginated list. Order details and inventory feature pages remain placeholders for subsequent integration steps.
 
 ## Technology stack
 
@@ -50,7 +50,7 @@ Apply migrations before starting the server. Startup does not migrate or seed au
 | -------------- | ------------------------------------------------------------------------- |
 | `/dashboard`   | Live KPI cards, five recent orders, low-stock products, and quick actions |
 | `/products`    | Live catalogue, debounced search, stock filters, and product details      |
-| `/orders`      | Order list placeholder with navigation to New order                       |
+| `/orders`      | Live order list with reference/status filters and pagination              |
 | `/orders/new`  | Product selection, cart, validated checkout, and confirmation             |
 | `/orders/[id]` | Order details placeholder (no data lookup or ID validation yet)           |
 | `/inventory`   | Inventory placeholder                                                     |
@@ -59,7 +59,7 @@ The shared layout provides a collapsible desktop sidebar, breadcrumbs, profile a
 
 Design tokens live in `src/app/globals.css`. Reusable components include Button, Input, Select, Card, Badge, Table, Dialog, DropdownMenu, Skeleton, EmptyState, PageHeader, and OrderStatusBadge. Dialogs, menus, and selects use Radix keyboard/focus handling. The shell includes semantic landmarks, a skip link, labelled icon controls, responsive grids, and reduced-motion support. System fonts keep builds independent of external font services.
 
-Use `npm run dev` and open the localhost URL printed by Next.js. Production builds use Next.js's supported Webpack compiler because the restricted local environment prevents Turbopack's CSS worker from binding its internal port. This does not change API contracts. Verify the layout at desktop, tablet, and mobile widths, open the mobile navigation and menus, and check the placeholder links. The dashboard is read-only. The product catalogue and dashboard are read-only. Order creation is implemented; order listing/details and inventory feature pages remain placeholders.
+Use `npm run dev` and open the localhost URL printed by Next.js. Production builds use Next.js's supported Webpack compiler because the restricted local environment prevents Turbopack's CSS worker from binding its internal port. This does not change API contracts. Verify the layout at desktop, tablet, and mobile widths, open the mobile navigation and menus, and check the placeholder links. The dashboard is read-only. The product catalogue and dashboard are read-only. Order creation is implemented; order details and inventory feature pages remain placeholders.
 
 ## Product catalogue
 
@@ -82,6 +82,18 @@ Only `{ items: [{ productId, quantity }] }` is sent to `POST /api/orders`. Clien
 Cart controls and checkout lock during submission, with an additional synchronous guard against repeated clicks. Writes have no automatic retries or offline queue, and a 20-second timeout. HTTP 400/404/409/500 and network failures preserve the cart on the current page. Stock conflicts refresh product queries so unavailable entries can be adjusted or removed. A lost or unreadable response is treated as an uncertain outcome, with guidance to check orders before manually retrying. The existing API has no idempotency-key contract; the UI does not claim exactly-once creation across network failures. Cart state is in memory; navigation or reload starts a fresh cart.
 
 Implementation lives in `src/features/orders/`: product selector, cart/items/summary, confirmation, create-order form, cart arithmetic, mutation/cart hooks, and the actual response contract. `apiPost` extends the shared client without changing GET behavior. Separator reuses the installed Radix package. No new dependencies or backend business logic changes were needed.
+
+## Order management
+
+Open `/orders` for the read-only order management table. It uses the existing `GET /api/orders` envelope: `{ orders, pagination: { page, limit, total, totalPages } }` inside `data`. Defaults remain page 1 and 20 rows, with validated limits from 1 through 100. Order rows retain the API's newest-first ordering and stored `totalCents`; displayed totals never use current product prices.
+
+Search by reference debounces for 300 ms. Status choices are All, PLACED, PACKED, SHIPPED and CANCELLED. Search, status, page and page size are stored in the URL; for example, `/orders?search=ORD&status=PACKED&page=2&limit=5`. Search/status/page-size edits reset to page one. Previous/next preserve active filters, clearing search preserves status, and browser Back/Forward or reload restore URL state. Invalid or repeated parameters show a resettable validation state instead of an unfiltered table. A page beyond the available results has an explicit return-to-first-page action.
+
+The existing list endpoint does not return item counts. The UI queries `/api/orders/[id]` only for visible rows and sums historical item quantities into total units using safe integer arithmetic. Details are cached under `['orders', 'detail', id]`; page/filter changes cancel unused reads. Each count has its own loading/error/retry state; failed reads display Unavailable rather than zero. Refresh updates both active list and detail queries. At the default page size this uses one list request plus up to 20 detail requests, with cache reuse on return visits. No backend API/contract was changed to add counts.
+
+The table shares the existing status badges, INR formatter, IST dates and design-system components. Loading skeletons, no-match and genuinely empty states, full-list retry, per-row count retry, and contained horizontal table scrolling support desktop and mobile use. Create Order opens `/orders/new`; reference and View links open `/orders/[id]`, which remains the existing placeholder until the details UI step.
+
+Order response types reuse the backend's `OrderSummary`, `OrderPage` and `OrderDetails` types with JSON timestamp conversion. Runtime Zod schemas check the observed response contracts. The existing TanStack Query provider and API client are reused, with no new dependencies or backend business logic changes.
 
 ## Environment configuration
 
@@ -581,7 +593,7 @@ An existing product with no movements returns 200 with an empty array and zero c
 - Cancellation allows only `PLACED`/`PACKED` to become `CANCELLED`, adding quantities to current stock and recording `ORDER_CANCELLED` once per order/product.
 - Immediate locking, conditional updates, and unique movement keys protect concurrent mutations. Timeouts return 409 without partial changes; cancellation also guards stock overflow.
 - Cancellation preserves items, original movements, price snapshots, totals, references, and creation timestamps. Product price changes never alter previous orders.
-- GET endpoints never mutate stock or create movements. No manual stock adjustment, product mutation, order deletion, is implemented. Frontend feature pages remain placeholders.
+- GET endpoints never mutate stock or create movements. No manual stock adjustment, product mutation, or order deletion is implemented. The dashboard, product catalogue, order creation, and order listing use real backend data; order details and inventory pages remain placeholders.
 
 ## Testing and verification
 
@@ -620,4 +632,6 @@ Step 10.3 verification passed 288 automated tests, including nine catalogue URL/
 
 Step 10.4 verification passed 304 automated tests, including 16 new cart/client/rendering/integration checks, and all 11 production integration tests (56 HTTP requests). Strict TypeScript, production build, and formatting passed. Browser checks covered name/SKU search, multiple products, repeated additions, increment/decrement, removal, out-of-stock controls, stock limits, exact totals, cart preservation after real 409 and injected 500/network failures, a delayed double-click submission producing exactly one order, confirmed reference/prices, success notification, cart clearing, refreshed inventory/dashboard, details-route navigation, and phone/tablet/desktop layouts. Search was separated from checkout to prevent Enter from submitting; a regression test also covers quantity recovery after a stock drop. All checkout writes and fault injection used an isolated SQLite database and temporary local servers, which were stopped afterward. Development order count remained unchanged during browser keyboard checks. No backend defect or business logic/schema change was required.
 
-The final dependency audit reports zero runtime findings and four moderate findings in Drizzle Kit's development-only esbuild chain. npm proposes a breaking downgrade, so working migration tooling is retained. A compatible upstream resolution remains outstanding. Authentication, custom CORS, frontend business workflows, and general production hardening are outside the implemented hackathon scope.
+Step 10.5 verification passed 317 automated tests, including 13 new order listing validation, URL, API, and rendering checks against isolated SQLite fixtures, and all 11 production integration tests (56 HTTP requests). Strict TypeScript, production build, formatting, and whitespace checks passed. Browser checks covered live order records, exact and unmatched reference searches, all four status filters, combined filters, pagination and page sizes, URL preservation and Back navigation, historical totals and total units, loading states, individual item-count failures and retry, list API failure and recovery, an empty database, out-of-range pages, create/details navigation, and phone/tablet/desktop layouts. Failure and empty-state checks used a temporary SQLite database, and its preview server was stopped afterward. No backend business logic, schema, or dependencies changed. Order details links reach the existing placeholder page; a complete details UI is reserved for a later step.
+
+The final dependency audit reports zero runtime findings and four moderate findings in Drizzle Kit's development-only esbuild chain. npm proposes a breaking downgrade, so working migration tooling is retained. A compatible upstream resolution remains outstanding. Authentication, custom CORS, remaining frontend workflows, and general production hardening are outside the implemented hackathon scope.

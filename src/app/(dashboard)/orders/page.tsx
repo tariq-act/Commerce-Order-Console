@@ -1,6 +1,13 @@
 import type { Metadata } from "next";
-import { PlaceholderPage } from "@/components/shared/placeholder-page";
+import { Suspense } from "react";
+import { OrdersList } from "@/features/orders/components/orders-list";
+import { OrdersPageSkeleton } from "@/features/orders/components/orders-skeleton";
+
 export const metadata: Metadata = { title: "Orders" };
 export default function OrdersPage() {
-  return <PlaceholderPage page="orders" />;
+  return (
+    <Suspense fallback={<OrdersPageSkeleton />}>
+      <OrdersList />
+    </Suspense>
+  );
 }
