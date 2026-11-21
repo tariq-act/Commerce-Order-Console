@@ -2,17 +2,42 @@
 
 Fynd Hiring Hackathon Commerce Order Console with a complete backend and a responsive frontend. It provides a product catalogue, atomic order placement, order search and details, fulfilment, cancellation with exactly-once stock restoration, and inventory movement history. The dashboard displays live order metrics, recent orders, and low-stock products from SQLite. The product catalogue supports live browsing, search, stock filters, and read-only product details. The create-order workflow supports a stock-aware multi-product cart and server-confirmed checkout. Order management supports a live searchable, filtered, paginated list. Order details show historical prices, status progress, fulfilment actions and confirmed cancellation. Inventory shows current stock, stock status, latest movements and paginated product history.
 
+**Submission track:** Full Stack Developer (SDE 1) · **Use case:** Commerce Order Console.
+
+## Quick walkthrough
+
+Follow the installation steps below. The exact quantities and prices here assume a fresh seeded database; seeding an existing database intentionally preserves its inventory and prices.
+
+1. Open `/products`: six synthetic products are seeded, including Webcam HD with zero stock. Search by name or SKU and inspect stock/details.
+2. Open `/orders/new`: add two Wireless Mice and one Mechanical Keyboard. The fresh-seed total is **₹4,097.00**. Submit and open the generated order reference.
+3. On `/orders`, search that reference and combine it with the PLACED status filter. Open details to see quantities, historical unit prices, line amounts and total.
+4. Mark the order PACKED, then SHIPPED. Cancellation is disabled; the server also rejects it. Inventory remains deducted by two mice and one keyboard.
+5. Create another order and cancel it while PLACED. Create a third, mark it PACKED, then cancel. Each cancellation restores only its own quantities once. `/inventory` shows the corresponding deductions and restorations with linked order references.
+6. Restart the application: orders and stock persist. Open `/dashboard` to see actual totals and revenue excluding cancelled orders.
+
+Run `npm test` for successful placement, insufficient-stock rollback, invalid transitions, repeated cancellation, and concurrency checks. Run `npm run test:integration` for production HTTP workflows, including a multi-item order containing an unavailable product that leaves every stock value and application row unchanged. A stale cart also displays stock-conflict feedback without discarding its items. The final audit results are recorded below.
+
+### Screenshots
+
+These captures show the actual application from local verification sessions; they are not mockups. The dashboard audit used isolated data and ended with one shipped order and three cancelled orders, with only **₹4,097.00** counted as revenue. The details and inventory captures are from separate local sessions, so references and stock counts may differ.
+
+![Dashboard after the complete lifecycle audit](docs/screenshots/dashboard-audit.jpg)
+
+![Order details with historical prices and fulfilment controls](docs/screenshots/order-details.jpg)
+
+![Inventory with current stock and latest movements](docs/screenshots/inventory.jpg)
+
 ## Technology stack
 
-| Technology                  | Role                                                       |
-| --------------------------- | ---------------------------------------------------------- |
-| Next.js App Router          | Node.js Route Handlers under `/api`                        |
-| TypeScript                  | Strict application, database, and test types               |
-| SQLite and better-sqlite3   | Persistent local database and synchronous transactions     |
-| Drizzle ORM and Drizzle Kit | Typed queries, constraints, migrations, and inspection     |
-| Zod                         | Server-side request, query, ID, and environment validation |
-| Node.js test runner and tsx | Isolated tests and production HTTP integration tests       |
-| Prettier                    | Consistent formatting                                      |
+| Technology                  | Role                                                    |
+| --------------------------- | ------------------------------------------------------- |
+| Next.js App Router          | Application pages and Node.js API Route Handlers        |
+| TypeScript                  | Strict application, database, and test types            |
+| SQLite and better-sqlite3   | Persistent local database and synchronous transactions  |
+| Drizzle ORM and Drizzle Kit | Typed queries, constraints, migrations, and inspection  |
+| Zod                         | Request, response, query, ID and environment validation |
+| Node.js test runner and tsx | Isolated tests and production HTTP integration tests    |
+| Prettier                    | Consistent formatting                                   |
 
 The frontend uses TanStack Query for server state, Sonner for error notifications, React, Tailwind CSS 4, Radix UI primitives, Lucide icons, and shadcn/ui-style components configured in `components.json`. Class composition uses clsx, tailwind-merge, and class-variance-authority. Runtime versions and the exact dependency tree are recorded in `package.json` and `package-lock.json`.
 
@@ -44,7 +69,7 @@ npm start
 
 Apply migrations before starting the server. Startup does not migrate or seed automatically. Database setup/testing tools are development dependencies, so run setup while those tools are installed. The SQLite file is supplied at runtime and is not bundled into the build. Deployment requires Node.js, native `better-sqlite3` support, and persistent writable storage for the database and its WAL sidecars; the Edge runtime is not supported.
 
-## Frontend foundation
+## Application pages
 
 | Route          | Current interface                                                                |
 | -------------- | -------------------------------------------------------------------------------- |
@@ -128,17 +153,20 @@ For deployment, use an absolute path on a persistent volume, for example `/var/l
 
 ```text
 src/
-  app/(dashboard)/             # Shared dashboard shell and placeholder routes
+  app/(dashboard)/             # Shared shell and all six implemented application routes
   components/
     layout/                    # Sidebar, header, mobile navigation, workspace dialogs
     ui/                        # Reusable shadcn/ui-style Radix and HTML primitives
-    shared/                    # Page headers, empty states, status badges, placeholders
+    shared/                    # Page headers, empty states and status badges
   hooks/use-sidebar.ts         # Sidebar persistence and mobile navigation state
   app/api/
     products/                  # Product list and details
     orders/                    # Creation, listing, details, fulfilment, cancellation
     inventory/                 # Current inventory and movement history
   features/dashboard/          # Dashboard components, query hook, and validated API contract
+  features/products/           # Catalogue, product details, filters and query hooks
+  features/orders/             # Cart, listing, details, status actions and query hooks
+  features/inventory/          # Stock overview, movement history and query hooks
   services/
     dashboard.service.ts       # Read-only snapshot aggregation across all orders
     product.service.ts         # Product queries reused by inventory
@@ -355,7 +383,7 @@ This example represents an empty database. Metrics cover **all** orders, indepen
 
 `recentOrders` has at most five `{ id, reference, status, totalCents, itemCount, createdAt }` records, ordered by creation date descending then ID descending. `itemCount` is the sum of quantities (total units); totals retain historical order prices. `lowStockProducts` contains `{ id, name, sku, stock }` records at or below the configured threshold, including zero stock, sorted by stock then ID ascending. `generatedAt` and order timestamps are ISO strings. Monetary fields are integer paise. Unsafe aggregate values fail with the standard safe HTTP 500 error instead of returning rounded money. Invalid server configuration or database failures also return HTTP 500 `INTERNAL_SERVER_ERROR`.
 
-The browser validates the response through `src/lib/api-client.ts` before caching it with TanStack Query. Dashboard data refreshes every minute while active, when stale on window focus, and through Refresh. Stale cache time is 30 seconds and failed reads retry once. Loading uses skeletons; errors hide previous figures and show retry controls with a Sonner notification. Empty arrays get dedicated empty states. Currency is formatted as INR, and displayed dates/times use `Asia/Kolkata` (IST). Quick actions link to the existing placeholder pages.
+The browser validates the response through `src/lib/api-client.ts` before caching it with TanStack Query. Dashboard data refreshes every minute while active, when stale on window focus, and through Refresh. Stale cache time is 30 seconds and failed reads retry once. Loading uses skeletons; errors hide previous figures and show retry controls with a Sonner notification. Empty arrays get dedicated empty states. Currency is formatted as INR, and displayed dates/times use `Asia/Kolkata` (IST). Quick actions open the implemented order creation, product catalogue, inventory and order listing pages.
 
 ### GET /api/products
 
@@ -626,11 +654,13 @@ The route/service suite uses migrated, seeded temporary SQLite files and separat
 
 The integration command builds Next.js, starts a production server on an available localhost port using an isolated database, and restarts it against the same file. It needs permission to listen on localhost. No external service is required. If a development database exists, its application rows are compared before and after. Temporary servers and files are cleaned up.
 
-| Production workflow | Checks                                                                                                  |
-| ------------------- | ------------------------------------------------------------------------------------------------------- |
-| A: fulfilment       | Order two mice; stock 25 to 23; retrieve details; pack; ship; reject cancellation; retain 23            |
-| B: cancellation     | Order three mice from 23; stock 20; cancel back to 23; reject repeat; exactly one cancellation movement |
-| C: unavailable item | Two available products plus zero-stock webcam reject all; every application row remains unchanged       |
+| Production workflow    | Checks                                                                                                                              |
+| ---------------------- | ----------------------------------------------------------------------------------------------------------------------------------- |
+| A: fulfilment          | Order two mice; stock 25 to 23; retrieve details; pack; ship; reject cancellation; retain 23                                        |
+| B: cancellation        | Order three mice from 23; stock 20; cancel back to 23; reject repeat; exactly one cancellation movement                             |
+| C: unavailable item    | Two available products plus zero-stock webcam reject all; every application row remains unchanged                                   |
+| D: packed cancellation | Multiple products; verify stored totals and deductions; pack; cancel; restore all stock once; reject repeat and invalid transitions |
+| E: page routes         | Root redirects to dashboard; all six application pages return HTML with working navigation and no obsolete placeholder copy         |
 
 Additional checks cover late-write rollback and safe 500 errors, retry after cancellation failure, historical prices, repeat migrations/seeds, invalid inputs, and persistence after restart. The database verifier checks all four tables, foreign-key enforcement/integrity, repeat migrations, and 41 invalid-write constraints in memory. Inventory GET tests also run with SQLite writes disabled.
 
@@ -638,7 +668,19 @@ For migration metadata consistency, run `node node_modules/drizzle-kit/bin.cjs c
 
 ## Submission and remaining issues
 
-All eleven API methods, reproducible setup, persistent SQLite storage, and contract/business/integration tests are included. Keep migration files and the lockfile in the submission. Seed products are reproducible; databases and local environment files are excluded. README examples insert orders only if you execute their POST commands.
+All six application routes, eleven API methods, reproducible setup, persistent SQLite storage, and contract/business/integration tests are included. Keep migration files and the lockfile in the submission. Seed products are reproducible; databases and local environment files are excluded. README examples insert orders only if you execute their POST commands.
+
+### Final application audit — Step 10.8
+
+The final audit executed `npm test` (351 passing tests), `npm run typecheck`, `npm run build`, and the production integration suite (13 passing tests and 75 HTTP requests). The integration suite was run directly after the successful build to avoid rebuilding unchanged code. It covers clean migrations/seeding, atomic placement and rollback, both cancellation states, invalid transitions and duplicates, historical prices, safe API errors, dashboard/database agreement, all application page routes, database constraints, and persistence after a production restart. Development database rows were verified unchanged.
+
+Browser verification used a separate, migrated and seeded SQLite file and the actual production application. A multi-product order deducted two mice and one keyboard and retained its 409700-paise total and historical 79900-paise mouse price after the current price changed. A double click created exactly one order. Fulfilment progressed to SHIPPED, with invalid controls disabled. A deliberately held writer lock exposed the pending update state and disabled controls, then the valid update completed when released. PLACED and PACKED cancellations restored every item, with confirmation dialogs and success notifications.
+
+A competing order exhausted the keyboards after a cart was prepared. Checkout returned a helpful stock conflict, preserved the cart and disabled invalid submission. Comparing every row in all four tables proved the failed order changed nothing. Seven additional shipped/duplicate/invalid requests returned 409 and left the same snapshot untouched. Cancelling the competing order restored inventory. The audit ended with four orders (one shipped, three cancelled), six historical items and ten complete, unique movements; mouse/keyboard stocks were 23/9. Dashboard revenue was exactly 409700 paise, excluding all cancelled orders. Product history APIs and SQLite agreed, with no missing movements or foreign-key violations.
+
+All six routes were checked at desktop, 768px tablet and 390px phone widths without page overflow. Checks included mobile navigation, product and cancellation dialogs, combined order search/status filters, loading and empty states, missing/invalid IDs, stock errors, Sonner messages, and dashboard failure/retry that hid stale figures. No console warnings or errors were captured in the checked tabs. After restarting the audit server, every application row still matched its saved snapshot and the browser loaded the same dashboard totals. Temporary database faults were restored and audit servers stopped.
+
+Final polish removed the unused placeholder page component, corrected obsolete architecture/navigation descriptions, and clarified the shared stock threshold in `.env.example`. No backend business logic, API contract, schema or dependency changed. No functional defect was reproduced. Core workflows are ready for a hackathon demonstration; the dependency advisory and scope limitations below remain.
 
 Backend finalization on November 21, 2026 executed 262 route/service/contract tests and 10 production HTTP integration tests (55 HTTP requests), all passing. The production build, strict TypeScript, formatting, migration consistency, and schema drift checks passed. Clean database setup, repeated seeding without inventory/price resets, application restart persistence, and 41 invalid-write constraint checks passed. Development database rows remained unchanged.
 
@@ -656,4 +698,4 @@ Step 10.6 verification passed all 338 automated tests, including 21 new detail/c
 
 Step 10.7 verification passed all 351 automated tests, including 13 new inventory UI/client/cache/contract tests. TypeScript and the production build passed. Browser checks covered the six real products, name/SKU and no-match searches, all stock statuses with the five-unit boundary, current inventory details, no-history records, 20-row movement pagination, order links, focus restoration, list/history failures and retry, an empty database, and desktop/tablet/phone layouts. An order placed through the UI changed mouse stock from 25 to 23 and created one deduction; cancelling it restored stock to 25 and created exactly one restoration, with cached inventory and history refreshed on navigation. After repeated GET checks, the isolated database retained exactly 26 unique movements with no duplicate restoration. A production restart using threshold 8 verified the request-time inventory configuration and matching dashboard API value; a separate HTTP check confirmed the inventory was genuinely empty. Temporary database faults were restored and test servers stopped. No backend API, schema, business logic, dependency or development inventory changed.
 
-The final dependency audit reports zero runtime findings and four moderate findings in Drizzle Kit's development-only esbuild chain. npm proposes a breaking downgrade, so working migration tooling is retained. A compatible upstream resolution remains outstanding. Authentication, custom CORS, remaining frontend workflows, and general production hardening are outside the implemented hackathon scope.
+The final dependency audit (`npm audit --json` and `npm audit --omit=dev --json`) reports zero runtime findings and four moderate findings in Drizzle Kit's development-only esbuild chain. npm proposes a breaking downgrade, so working migration tooling is retained. A compatible upstream resolution remains outstanding. Authentication, notification delivery, custom CORS and general production hardening are outside the implemented hackathon scope.

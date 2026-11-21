@@ -432,6 +432,77 @@ describe("production HTTP backend audit", { concurrency: false }, () => {
     assert.deepEqual(snapshot(), before);
   });
 
+  test("multi-product packed cancellation restores every item once without changing historical totals", async () => {
+    const mouse = product("ACC-001");
+    const keyboard = product("ACC-002");
+    const before = snapshot();
+    const inventoryBefore = await success<InventoryRecord[]>("GET", "/api/inventory");
+    const current = (id: number) => inventoryBefore.find((item) => item.id === id)!;
+    const order = await success<JsonOrder>("POST", "/api/orders", 201, {
+      items: [
+        { productId: mouse.id, quantity: 2 },
+        { productId: keyboard.id, quantity: 1 },
+      ],
+    });
+    assert.equal(
+      order.totalCents,
+      current(mouse.id).priceCents * 2 + current(keyboard.id).priceCents,
+    );
+    assert.equal(await mouseStock(), current(mouse.id).stock - 2);
+    assert.equal(
+      (await success<InventoryRecord>("GET", `/api/inventory/${keyboard.id}`)).stock,
+      current(keyboard.id).stock - 1,
+    );
+    await failure("PATCH", `/api/orders/${order.id}/status`, 409, "INVALID_TRANSITION", {
+      status: "SHIPPED",
+    });
+    await success("PATCH", `/api/orders/${order.id}/status`, 200, { status: "PACKED" });
+    const details = await success<JsonDetails>("GET", `/api/orders/${order.id}`);
+    assert.equal(details.items.length, 2);
+    await success("POST", `/api/orders/${order.id}/cancel`);
+    const restored = await success<JsonDetails>("GET", `/api/orders/${order.id}`);
+    assert.deepEqual(restored, { ...details, status: "CANCELLED" });
+    assert.deepEqual(await success<InventoryRecord[]>("GET", "/api/inventory"), inventoryBefore);
+    const state = snapshot();
+    await failure("POST", `/api/orders/${order.id}/cancel`, 409, "INVALID_TRANSITION");
+    await failure("PATCH", `/api/orders/${order.id}/status`, 409, "INVALID_TRANSITION", {
+      status: "PACKED",
+    });
+    assert.deepEqual(snapshot(), state);
+    assert.equal(state.inventory_movements.length - before.inventory_movements.length, 4);
+    assert.equal(
+      inspection
+        .prepare(
+          "SELECT COUNT(*) total FROM inventory_movements WHERE order_id = ? AND type = 'ORDER_CANCELLED'",
+        )
+        .pluck()
+        .get(order.id),
+      2,
+    );
+  });
+
+  test("every implemented application page resolves with navigation and no obsolete placeholder copy", async () => {
+    for (const path of [
+      "/",
+      "/dashboard",
+      "/products",
+      "/orders",
+      "/orders/new",
+      `/orders/${fulfilled.id}`,
+      "/inventory",
+    ]) {
+      const response = await fetch(`${baseUrl}${path}`, { signal: AbortSignal.timeout(10000) });
+      httpChecks++;
+      assert.equal(response.status, 200, path);
+      assert.match(response.headers.get("content-type") ?? "", /text\/html/);
+      const html = await response.text();
+      assert.match(html, /Commerce Console/);
+      assert.match(html, /href="\/inventory"/);
+      assert.doesNotMatch(html, /This workspace is being prepared|interface is coming next/);
+      if (path === "/") assert.ok(response.url.endsWith("/dashboard"));
+    }
+  });
+
   test("application restart preserves statuses, stock, prices, totals, items, and movements", async () => {
     const before = snapshot();
     const previousPid = server?.pid;
