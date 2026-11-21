@@ -1,6 +1,6 @@
 # Commerce Order Console backend setup
 
-Steps 1 through 3 provide the SQLite schema, database infrastructure, repeatable product seeding, and read-only product REST APIs for the Fynd Hiring Hackathon. The workspace was empty, so this project includes a minimal Next.js App Router configuration with strict TypeScript. Order APIs, frontend components, and business operations are deferred to later steps. The application can run and build with API routes only.
+Steps 1 through 4 provide the SQLite schema, database infrastructure, repeatable product seeding, product REST APIs, and transactional order creation for the Fynd Hiring Hackathon. The workspace was empty, so this project includes a minimal Next.js App Router configuration with strict TypeScript. Order listing, cancellation, fulfilment, and frontend components are deferred to later steps. The application can run and build with API routes only.
 
 ## Setup and commands
 
@@ -26,7 +26,7 @@ The database defaults to `./data/commerce.db`. To change it, copy `.env.example`
 | `npm run db:studio` | Open Drizzle Studio for database inspection |
 | `npm run db:verify` | Read-check the application database and test constraints in an isolated in-memory database |
 | `npm run typecheck` | Run the strict TypeScript check |
-| `npm test` | Run product endpoint tests against a migrated, seeded temporary SQLite database |
+| `npm test` | Run product and order tests against migrated, seeded temporary SQLite databases |
 
 Apply migrations explicitly before using the database. Application startup does not apply them automatically. Verification inserts temporary rows only in memory and closes that database afterward; it does not seed or modify application rows.
 
@@ -63,6 +63,37 @@ Validation errors use the same error envelope with code `VALIDATION_ERROR` and f
 
 Queries live in `src/services/product.service.ts`, Zod validation in `src/lib/validations/product.ts`, and shared JSON response types/helpers in `src/lib/api-response.ts`. The route handlers are under `src/app/api/products/`. Tests in `tests/products.test.ts` cover seeded results, filters, search, valid and invalid IDs, invalid queries, safe failures, and live stock changes using the real schema, migrations, and seed script. Test data is isolated from the application database and removed afterward.
 
+## Order creation API
+
+`POST /api/orders` accepts JSON containing at least one item. Product IDs match the existing integer schema: use a positive safe integer or its decimal digit string. Quantities must be positive safe integer JSON numbers. Duplicate IDs are rejected after normalization, so `1`, `"1"`, and `"01"` identify the same product. Unknown body/item fields, including client-supplied prices, are rejected.
+
+Example request using seeded product IDs:
+
+```json
+{
+  "items": [
+    { "productId": "1", "quantity": 2 },
+    { "productId": "2", "quantity": 1 }
+  ]
+}
+```
+
+HTTP 201 returns the shared success envelope with `data.id`, a generated `data.reference` beginning with `ORD-`, `data.status` equal to `PLACED`, `data.items`, `data.totalCents`, and an ISO `data.createdAt`. Each response item contains `productId`, `productName`, `quantity`, and historical `unitPriceCents`. The example request totals 409700 paise using the initial product prices.
+
+| HTTP status | Error code and meaning |
+| --- | --- |
+| 400 | `VALIDATION_ERROR`: invalid JSON/body, duplicate IDs, invalid quantities/IDs, or a total outside the safe integer range |
+| 404 | `NOT_FOUND`: a requested product does not exist |
+| 409 | `INSUFFICIENT_STOCK`: a requested quantity is unavailable |
+| 409 | `INVENTORY_CONFLICT`: a conditional deduction failed or the SQLite writer lock could not be acquired before the existing timeout |
+| 500 | `INTERNAL_SERVER_ERROR`: unexpected failure, with details logged only on the server |
+
+`src/app/api/orders/route.ts` handles JSON input and shared HTTP responses. `src/services/order.service.ts` validates with `src/lib/validations/order.ts` and implements placement, so callers of the service receive the same input safeguards.
+
+The service uses one synchronous Drizzle transaction with `behavior: "immediate"`, which acquires the SQLite writer lock before reading product availability ([SQLite transaction documentation](https://www.sqlite.org/lang_transaction.html)). It reuses the connection's WAL mode and five-second busy timeout. All product reads, price snapshots, stock checks, total calculations, order/item inserts, stock deductions, and `ORDER_PLACED` movement inserts run inside that transaction. Every item is checked before any rows or stock are changed. Deductions use `UPDATE ... WHERE stock >= quantity` and require exactly one affected row. Any thrown failure rolls back the entire transaction. Money multiplication and addition use `BigInt`; only totals within JavaScript's safe integer range are converted to the existing integer paise fields.
+
+`tests/orders.test.ts` covers successful orders, exact totals, deductions and movements, input failures, missing products, shortages, full rollback after injected write failures, conditional-update conflicts, writer-lock timeouts, overflow, and price snapshot preservation. The concurrency test uses four separate processes through `tests/helpers/place-order-worker.ts`, each with its own SQLite connection, released against the same limited stock. All fixtures and test mutations use temporary databases; development seed data is preserved.
+
 ## Database modules
 
 - `src/db/index.ts` exports the reusable `db` connection, cached across development hot reloads.
@@ -84,4 +115,4 @@ Money is stored in integer cents. Database checks require non-negative integer m
 
 Timestamps are stored as Unix milliseconds and mapped to JavaScript `Date` values. Database creation defaults have one-second precision. Drizzle refreshes `updatedAt` on ORM updates unless a value is explicitly supplied; direct SQL writers must set `updatedAt` themselves.
 
-The schema does not yet calculate order totals, change stock, enforce status transitions, or write inventory movements. Those operations belong to later transactional business logic.
+Order placement calculates totals, deducts stock, and writes inventory movements through the transaction described above. Order status transitions, cancellation, and fulfilment remain deferred.
