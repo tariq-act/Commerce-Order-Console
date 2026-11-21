@@ -226,7 +226,7 @@ Prettier is pinned and configured in `.prettierrc.json`. Generated Next.js files
 
 ## API conventions
 
-All ten implemented methods use `src/lib/api-response.ts`. Success responses have only `success` and `data`:
+All eleven implemented methods use `src/lib/api-response.ts`. Success responses have only `success` and `data`:
 
 ```json
 { "success": true, "data": [] }
@@ -591,5 +591,7 @@ All eleven API methods, reproducible setup, persistent SQLite storage, and contr
 Backend finalization on November 21, 2026 executed 262 route/service/contract tests and 10 production HTTP integration tests (55 HTTP requests), all passing. The production build, strict TypeScript, formatting, migration consistency, and schema drift checks passed. Clean database setup, repeated seeding without inventory/price resets, application restart persistence, and 41 invalid-write constraint checks passed. Development database rows remained unchanged.
 
 Step 10.1 frontend verification reran all 262 backend tests and all 10 production integration tests (55 HTTP requests); all passed and development database rows remained unchanged. The Webpack production build, strict TypeScript, and formatting passed. All six frontend routes returned 200, and `/` returned a 307 redirect to `/dashboard`. Browser checks covered desktop/sidebar persistence, phone and tablet layouts, mobile navigation, breadcrumbs, profile/notification menus, dialogs, keyboard dismissal, focus trapping, and focus restoration. Backend APIs, schema, services, and tests were not changed.
+
+Step 10.2 verification passed 279 route/service/client/format tests and 11 production integration tests (56 HTTP requests). Dashboard totals, latest order IDs/unit counts, low-stock boundaries, historical prices, read-only behavior, and empty/error responses were checked against isolated SQLite databases. Browser checks verified real development records, empty data, a forced database failure and retry recovery, loading skeletons, details navigation, and 390px/768px/1440px layouts. A mobile overflow issue in the shared table wrapper was corrected. Strict TypeScript, formatting, and the production build passed. Existing order mutation logic and database schema remain unchanged.
 
 The final dependency audit reports zero runtime findings and four moderate findings in Drizzle Kit's development-only esbuild chain. npm proposes a breaking downgrade, so working migration tooling is retained. A compatible upstream resolution remains outstanding. Authentication, custom CORS, frontend business workflows, and general production hardening are outside the implemented hackathon scope.
