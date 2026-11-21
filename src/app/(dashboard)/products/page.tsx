@@ -1,6 +1,13 @@
 import type { Metadata } from "next";
-import { PlaceholderPage } from "@/components/shared/placeholder-page";
+import { Suspense } from "react";
+import { ProductCatalogue } from "@/features/products/components/product-catalogue";
+import { ProductsPageSkeleton } from "@/features/products/components/products-skeleton";
+
 export const metadata: Metadata = { title: "Products" };
 export default function ProductsPage() {
-  return <PlaceholderPage page="products" />;
+  return (
+    <Suspense fallback={<ProductsPageSkeleton />}>
+      <ProductCatalogue />
+    </Suspense>
+  );
 }

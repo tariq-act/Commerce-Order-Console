@@ -1,6 +1,6 @@
 # Fynd Commerce Order Console
 
-Fynd Hiring Hackathon Commerce Order Console with a complete backend and a responsive frontend foundation. It provides a product catalogue, atomic order placement, order search and details, fulfilment, cancellation with exactly-once stock restoration, and inventory movement history. The dashboard displays live order metrics, recent orders, and low-stock products from SQLite. Other feature pages remain placeholders for subsequent integration steps.
+Fynd Hiring Hackathon Commerce Order Console with a complete backend and a responsive frontend foundation. It provides a product catalogue, atomic order placement, order search and details, fulfilment, cancellation with exactly-once stock restoration, and inventory movement history. The dashboard displays live order metrics, recent orders, and low-stock products from SQLite. The product catalogue supports live browsing, search, stock filters, and read-only product details. Order and inventory feature pages remain placeholders for subsequent integration steps.
 
 ## Technology stack
 
@@ -49,7 +49,7 @@ Apply migrations before starting the server. Startup does not migrate or seed au
 | Route          | Current interface                                                         |
 | -------------- | ------------------------------------------------------------------------- |
 | `/dashboard`   | Live KPI cards, five recent orders, low-stock products, and quick actions |
-| `/products`    | Catalogue placeholder                                                     |
+| `/products`    | Live catalogue, debounced search, stock filters, and product details      |
 | `/orders`      | Order list placeholder with navigation to New order                       |
 | `/orders/new`  | Order creation placeholder                                                |
 | `/orders/[id]` | Order details placeholder (no data lookup or ID validation yet)           |
@@ -59,7 +59,17 @@ The shared layout provides a collapsible desktop sidebar, breadcrumbs, profile a
 
 Design tokens live in `src/app/globals.css`. Reusable components include Button, Input, Select, Card, Badge, Table, Dialog, DropdownMenu, Skeleton, EmptyState, PageHeader, and OrderStatusBadge. Dialogs, menus, and selects use Radix keyboard/focus handling. The shell includes semantic landmarks, a skip link, labelled icon controls, responsive grids, and reduced-motion support. System fonts keep builds independent of external font services.
 
-Use `npm run dev` and open the localhost URL printed by Next.js. Production builds use Next.js's supported Webpack compiler because the restricted local environment prevents Turbopack's CSS worker from binding its internal port. This does not change API contracts. Verify the layout at desktop, tablet, and mobile widths, open the mobile navigation and menus, and check the placeholder links. The dashboard is read-only. Product, order and inventory feature pages remain placeholders.
+Use `npm run dev` and open the localhost URL printed by Next.js. Production builds use Next.js's supported Webpack compiler because the restricted local environment prevents Turbopack's CSS worker from binding its internal port. This does not change API contracts. Verify the layout at desktop, tablet, and mobile widths, open the mobile navigation and menus, and check the placeholder links. The dashboard is read-only. The product catalogue and dashboard are read-only. Order and inventory feature pages remain placeholders.
+
+## Product catalogue
+
+Open `/products` to browse the current SQLite catalogue. The table shows product name, SKU, description, INR price, stock quantity, availability, and a View action. Product information is fetched through the existing shared API client and validated against the actual product JSON contract before entering TanStack Query's cache. The details dialog fetches `/api/products/[id]` independently so it includes current inventory, full description, creation and update dates. No product creation, editing, deletion, or stock mutation is implemented.
+
+The search field debounces by 300 ms and searches both name and SKU through `GET /api/products`. Stock choices map to the API's `stock=in_stock` and `stock=out_of_stock`; All products omits that parameter. Search and stock filters combine. State is shareable through `/products?search=mouse&stock=in_stock`; `product=<id>` opens a product details deep link. Filter changes preserve pending searches, and selection changes preserve filters. Search edits replace the current history entry; stock selections and opening a product add entries. Closing details removes selection while preserving filters. Browser Back/Forward and reload use the URL state.
+
+Loading skeletons cover list and detail requests; dedicated states handle empty catalogues, no matching results, malformed URL filters/IDs, missing products, and API failures. Failures hide outdated records and offer retry controls where retrying can help. List errors also use Sonner notifications. Dialogs trap focus, support Escape, and return focus to the View button or search field. The table scrolls within its card on narrow screens; other controls and the dialog adapt to the viewport. Currency and dates reuse the shared INR/IST formatters. All data comes from the existing product endpoints; no backend API, business rule, or database schema changes are needed.
+
+Implementation lives in `src/features/products/`: reusable table/search/filter/details/status components, query and URL state hooks, URL parsing helpers, and Zod response types. No new dependencies were added for this step.
 
 ## Environment configuration
 
@@ -593,5 +603,7 @@ Backend finalization on November 21, 2026 executed 262 route/service/contract te
 Step 10.1 frontend verification reran all 262 backend tests and all 10 production integration tests (55 HTTP requests); all passed and development database rows remained unchanged. The Webpack production build, strict TypeScript, and formatting passed. All six frontend routes returned 200, and `/` returned a 307 redirect to `/dashboard`. Browser checks covered desktop/sidebar persistence, phone and tablet layouts, mobile navigation, breadcrumbs, profile/notification menus, dialogs, keyboard dismissal, focus trapping, and focus restoration. Backend APIs, schema, services, and tests were not changed.
 
 Step 10.2 verification passed 279 route/service/client/format tests and 11 production integration tests (56 HTTP requests). Dashboard totals, latest order IDs/unit counts, low-stock boundaries, historical prices, read-only behavior, and empty/error responses were checked against isolated SQLite databases. Browser checks verified real development records, empty data, a forced database failure and retry recovery, loading skeletons, details navigation, and 390px/768px/1440px layouts. A mobile overflow issue in the shared table wrapper was corrected. Strict TypeScript, formatting, and the production build passed. Existing order mutation logic and database schema remain unchanged.
+
+Step 10.3 verification passed 288 automated tests, including nine catalogue URL/client/rendering tests against real seeded API responses, and all 11 production integration tests (56 HTTP requests). TypeScript, production build, and formatting passed. Browser checks covered all six seeded products, name and SKU searches, both stock filters, combined filters, URL reload persistence, product details and focus restoration, loading skeletons, no-match and genuinely empty catalogues, missing/invalid product IDs, forced list/detail API failures and retry recovery, and phone/tablet/desktop layouts. Failure/empty checks used a separate temporary SQLite database. No backend implementation, database schema, dependency, or development product data was changed.
 
 The final dependency audit reports zero runtime findings and four moderate findings in Drizzle Kit's development-only esbuild chain. npm proposes a breaking downgrade, so working migration tooling is retained. A compatible upstream resolution remains outstanding. Authentication, custom CORS, frontend business workflows, and general production hardening are outside the implemented hackathon scope.
