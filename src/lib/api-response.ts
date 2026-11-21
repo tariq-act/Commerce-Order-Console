@@ -4,7 +4,7 @@ export type ApiSuccess<T> = { success: true; data: T };
 export type ApiError = {
   success: false;
   error: {
-    code: "VALIDATION_ERROR" | "NOT_FOUND" | "INSUFFICIENT_STOCK" | "INVENTORY_CONFLICT" | "INTERNAL_SERVER_ERROR";
+    code: "VALIDATION_ERROR" | "NOT_FOUND" | "INSUFFICIENT_STOCK" | "INVENTORY_CONFLICT" | "INVALID_TRANSITION" | "INTERNAL_SERVER_ERROR";
     message: string;
     details?: { field: string; message: string }[];
   };

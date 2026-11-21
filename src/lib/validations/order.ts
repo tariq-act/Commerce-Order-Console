@@ -50,3 +50,7 @@ export const orderIdParamsSchema = z.object({
   id: z.string().regex(/^\d+$/, "Order ID must contain only decimal digits.")
     .transform(Number).pipe(positiveInteger),
 });
+
+export const updateOrderStatusSchema = z.strictObject({
+  status: z.enum(orderStatuses),
+});

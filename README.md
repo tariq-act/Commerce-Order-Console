@@ -1,6 +1,6 @@
 # Commerce Order Console backend setup
 
-Steps 1 through 5 provide the SQLite schema, database infrastructure, repeatable product seeding, product REST APIs, transactional order creation, and order listing/details for the Fynd Hiring Hackathon. The workspace was empty, so this project includes a minimal Next.js App Router configuration with strict TypeScript. Cancellation, fulfilment, and frontend components are deferred to later steps. The application can run and build with API routes only.
+Steps 1 through 6 provide the SQLite schema, database infrastructure, repeatable product seeding, product REST APIs, transactional order creation, order listing/details, fulfilment, and cancellation for the Fynd Hiring Hackathon. The workspace was empty, so this project includes a minimal Next.js App Router configuration with strict TypeScript. Frontend components are deferred to later steps. The application can run and build with API routes only.
 
 ## Setup and commands
 
@@ -131,6 +131,36 @@ Read queries live in `src/services/order-query.service.ts`, separate from the ex
 
 `tests/order-queries.test.ts` uses a migrated, seeded temporary database and the existing order creation service. It covers all statuses, combined search/filtering, sort order, pagination/defaults/limits, complete details, historical prices, invalid inputs, nonexistent IDs, injection strings, safe failures, and unchanged rows after reads. Status changes in these fixtures do not implement status-transition APIs.
 
+## Fulfilment and cancellation APIs
+
+Use an existing order ID from order creation or `GET /api/orders`.
+
+`PATCH /api/orders/[id]/status` accepts a strict JSON body:
+
+```json
+{ "status": "PACKED" }
+```
+
+Only `PLACED` to `PACKED` and `PACKED` to `SHIPPED` are allowed. Every other transition is rejected, including no-op requests, backwards transitions, and using this endpoint to set `CANCELLED`. Fulfilment never changes stock or inventory movements.
+
+`POST /api/orders/[id]/cancel` requires no body. It allows `PLACED` or `PACKED` to transition to `CANCELLED`. Requests for `SHIPPED` or already `CANCELLED` orders are rejected. Each item restores its quantity to current product stock and creates one `ORDER_CANCELLED` movement, while preserving the original `ORDER_PLACED` movements.
+
+Both endpoints return HTTP 200 with the shared success envelope. `data` contains `id`, `reference`, `status`, `totalCents`, and ISO `createdAt`/`updatedAt`. Item records, historical unit prices, order totals, references, and creation dates remain unchanged.
+
+| HTTP status | Meaning |
+| --- | --- |
+| 400 | `VALIDATION_ERROR`: invalid ID, malformed JSON, unknown status, or invalid status body |
+| 404 | `NOT_FOUND`: the order does not exist |
+| 409 | `INVALID_TRANSITION`: the requested transition is disallowed or a conditional status update failed |
+| 409 | `INVENTORY_CONFLICT`: writer-lock timeout, duplicate restoration movement, or a restoration that cannot safely update stock |
+| 500 | `INTERNAL_SERVER_ERROR`: unexpected failure with details logged only on the server |
+
+`updateOrderStatus` and `cancelOrder` extend the existing `src/services/order.service.ts`; order creation logic is preserved. Both validate inputs in the service and use the existing connection with one synchronous immediate transaction per operation. They fetch the order after obtaining the writer lock and conditionally update only its expected current status. Cancellation then restores every item's stock and inserts its cancellation movement before committing. Restoration also guards the existing maximum safe integer stock limit.
+
+Repeated or competing cancellation requests cannot restore stock twice: the status check rejects completed cancellation, the conditional update checks the expected status, and the existing unique order/product/movement-type index rejects duplicate records. Duplicate inserts are never silently ignored; they throw so the status change, all stock restorations, and all new movements roll back together. Any other failure has the same all-or-nothing behavior. Existing WAL mode and the five-second busy timeout are reused.
+
+`tests/order-transitions.test.ts` covers the full status-transition matrix, cancellation from both eligible states, forbidden/repeated requests, multi-item restoration, original history, invalid/nonexistent IDs, malformed payloads, stock overflow, unique constraints, writer-lock timeout, conditional-update failures, and failures after earlier items have been restored. `tests/helpers/order-transition-worker.ts` runs separate SQLite connections for simultaneous cancellations, duplicate fulfilment, and shipping versus cancellation. Every test uses a temporary database.
+
 ## Database modules
 
 - `src/db/index.ts` exports the reusable `db` connection, cached across development hot reloads.
@@ -152,4 +182,4 @@ Money is stored in integer cents. Database checks require non-negative integer m
 
 Timestamps are stored as Unix milliseconds and mapped to JavaScript `Date` values. Database creation defaults have one-second precision. Drizzle refreshes `updatedAt` on ORM updates unless a value is explicitly supplied; direct SQL writers must set `updatedAt` themselves.
 
-Order placement calculates totals, deducts stock, and writes inventory movements through the transaction described above. Order status transitions, cancellation, and fulfilment remain deferred.
+Order placement calculates totals, deducts stock, and writes inventory movements through its transaction. Fulfilment changes only allowed statuses. Cancellation restores item quantities and records inventory movements in one transaction without modifying historical prices or totals.
