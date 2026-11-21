@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { queryParametersToObject } from "./query";
 
 export const productQuerySchema = z.strictObject({
   search: z.string().trim().min(1).max(200).optional(),
@@ -8,13 +9,7 @@ export const productQuerySchema = z.strictObject({
 export type ProductQuery = z.infer<typeof productQuerySchema>;
 
 export function validateProductQuery(parameters: URLSearchParams) {
-  const input: Record<string, string | string[]> = Object.create(null);
-  for (const key of new Set(parameters.keys())) {
-    const values = parameters.getAll(key);
-    // Preserve repeated values so Zod rejects ambiguous query parameters.
-    input[key] = values.length === 1 ? values[0] : values;
-  }
-  return productQuerySchema.safeParse(input);
+  return productQuerySchema.safeParse(queryParametersToObject(parameters));
 }
 
 export const productIdParamsSchema = z.object({

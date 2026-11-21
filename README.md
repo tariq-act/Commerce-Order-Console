@@ -1,6 +1,6 @@
 # Commerce Order Console backend setup
 
-Steps 1 through 4 provide the SQLite schema, database infrastructure, repeatable product seeding, product REST APIs, and transactional order creation for the Fynd Hiring Hackathon. The workspace was empty, so this project includes a minimal Next.js App Router configuration with strict TypeScript. Order listing, cancellation, fulfilment, and frontend components are deferred to later steps. The application can run and build with API routes only.
+Steps 1 through 5 provide the SQLite schema, database infrastructure, repeatable product seeding, product REST APIs, transactional order creation, and order listing/details for the Fynd Hiring Hackathon. The workspace was empty, so this project includes a minimal Next.js App Router configuration with strict TypeScript. Cancellation, fulfilment, and frontend components are deferred to later steps. The application can run and build with API routes only.
 
 ## Setup and commands
 
@@ -93,6 +93,43 @@ HTTP 201 returns the shared success envelope with `data.id`, a generated `data.r
 The service uses one synchronous Drizzle transaction with `behavior: "immediate"`, which acquires the SQLite writer lock before reading product availability ([SQLite transaction documentation](https://www.sqlite.org/lang_transaction.html)). It reuses the connection's WAL mode and five-second busy timeout. All product reads, price snapshots, stock checks, total calculations, order/item inserts, stock deductions, and `ORDER_PLACED` movement inserts run inside that transaction. Every item is checked before any rows or stock are changed. Deductions use `UPDATE ... WHERE stock >= quantity` and require exactly one affected row. Any thrown failure rolls back the entire transaction. Money multiplication and addition use `BigInt`; only totals within JavaScript's safe integer range are converted to the existing integer paise fields.
 
 `tests/orders.test.ts` covers successful orders, exact totals, deductions and movements, input failures, missing products, shortages, full rollback after injected write failures, conditional-update conflicts, writer-lock timeouts, overflow, and price snapshot preservation. The concurrency test uses four separate processes through `tests/helpers/place-order-worker.ts`, each with its own SQLite connection, released against the same limited stock. All fixtures and test mutations use temporary databases; development seed data is preserved.
+
+## Order listing and details APIs
+
+`GET /api/orders` returns paginated order summaries with ID, reference, status, integer paise `totalCents`, and ISO `createdAt`. Orders are sorted by creation timestamp descending, then ID descending to keep equal-date results in a stable order.
+
+| Parameter | Validation and behavior |
+| --- | --- |
+| `search` | Optional case-insensitive literal substring search on the reference; 1–200 characters after trimming |
+| `status` | Optional exact value: `PLACED`, `PACKED`, `SHIPPED`, or `CANCELLED` |
+| `page` | Positive safe integer in decimal digits; defaults to 1; the resulting offset must also be a safe integer |
+| `limit` | Integer from 1 through 100 in decimal digits; defaults to 20 |
+
+Search and status conditions are combined with AND. For example, `/api/orders?search=ord-&status=PLACED&page=1&limit=20` returns the first page of matching placed orders. Pagination totals reflect the matching filters. Pages beyond the end return an empty array; an empty result has `totalPages: 0`. Unknown, repeated, empty, or malformed query parameters return HTTP 400.
+
+Example list response when nothing matches:
+
+```json
+{
+  "success": true,
+  "data": {
+    "orders": [],
+    "pagination": { "page": 1, "limit": 20, "total": 0, "totalPages": 0 }
+  }
+}
+```
+
+`GET /api/orders/[id]` requires a positive safe integer ID. Its success envelope contains `data.id`, `reference`, `status`, `totalCents`, `createdAt`, and `items`. Each item includes `id`, `productId`, `productName`, `sku`, `quantity`, historical `unitPriceCents`, and `subtotalCents`. Product names/SKUs come from the product record, while monetary values come from the stored order/item snapshots. Subtotals multiply historical unit prices by quantities using exact integer arithmetic. The order total is read from `orders.totalCents` and is never recalculated from current product prices.
+
+Both endpoints return HTTP 200 on success, HTTP 400 for invalid parameters, and safe HTTP 500 JSON on unexpected failures. A missing order returns HTTP 404:
+
+```json
+{ "success": false, "error": { "code": "NOT_FOUND", "message": "Order not found." } }
+```
+
+Read queries live in `src/services/order-query.service.ts`, separate from the existing order creation logic. Each response uses a read transaction so its count/page or header/items share one SQLite snapshot. Filtering and joins use bound Drizzle queries ([Drizzle query documentation](https://orm.drizzle.team/docs/select)); wildcard search characters are treated literally. Both routes use the Node.js runtime and return `Cache-Control: no-store`.
+
+`tests/order-queries.test.ts` uses a migrated, seeded temporary database and the existing order creation service. It covers all statuses, combined search/filtering, sort order, pagination/defaults/limits, complete details, historical prices, invalid inputs, nonexistent IDs, injection strings, safe failures, and unchanged rows after reads. Status changes in these fixtures do not implement status-transition APIs.
 
 ## Database modules
 
