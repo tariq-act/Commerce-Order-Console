@@ -1,243 +1,544 @@
-# Commerce Order Console backend setup
+# Fynd Commerce Order Console
 
-Steps 1 through 8 provide the SQLite schema, database infrastructure, repeatable product seeding, product REST APIs, transactional order creation, order listing/details, fulfilment, cancellation, read-only inventory/history APIs, and a backend integration audit for the Fynd Hiring Hackathon. The workspace was empty, so this project includes a minimal Next.js App Router configuration with strict TypeScript. Frontend components are deferred to later steps. The application can run and build with API routes only.
+Backend for the Fynd Hiring Hackathon Commerce Order Console. It provides a product catalogue, atomic order placement, order search and details, fulfilment, cancellation with exactly-once stock restoration, and inventory movement history. No frontend pages or components are implemented.
 
-## Setup and commands
+## Technology stack
 
-Use Node.js 22 or later. Run commands from the project root:
+| Technology                  | Role                                                       |
+| --------------------------- | ---------------------------------------------------------- |
+| Next.js App Router          | Node.js Route Handlers under `/api`                        |
+| TypeScript                  | Strict application, database, and test types               |
+| SQLite and better-sqlite3   | Persistent local database and synchronous transactions     |
+| Drizzle ORM and Drizzle Kit | Typed queries, constraints, migrations, and inspection     |
+| Zod                         | Server-side request, query, ID, and environment validation |
+| Node.js test runner and tsx | Isolated tests and production HTTP integration tests       |
+| Prettier                    | Consistent formatting                                      |
+
+React is installed for Next.js compatibility. Runtime versions and the exact dependency tree are recorded in `package.json` and `package-lock.json`.
+
+## Installation
+
+Requirements: Node.js 22 or later, npm, and a writable local filesystem. Run commands from the project root.
 
 ```sh
 npm ci
+cp .env.example .env.local
 npm run db:migrate
 npm run db:seed
-npm run db:verify
-npm run typecheck
-npm test
+npm run dev
 ```
 
-The database defaults to `./data/commerce.db`. To change it, copy `.env.example` to `.env.local` and set `DATABASE_PATH` to a local file path. Relative paths resolve from the project root. Environment files follow Next.js loading rules; the same configuration is used by application code, migrations, and Drizzle Studio. Database files and local environment files are ignored by Git. The migration SQL and its metadata must be committed.
+The local API base URL is `http://localhost:3000/api`. The project serves API routes without a frontend homepage. Check the seed with:
 
-| Command                                     | Purpose                                                                                      |
-| ------------------------------------------- | -------------------------------------------------------------------------------------------- |
-| `npm run db:generate -- --name=description` | Generate a migration after changing the schema                                               |
-| `npm run db:migrate`                        | Apply pending migrations using the configured connection                                     |
-| `npm run db:seed`                           | Insert the six initial products, skipping SKUs that already exist                            |
-| `npm run db:inspect`                        | List tables, indexes, row counts, and foreign key integrity                                  |
-| `npm run db:studio`                         | Open Drizzle Studio for database inspection                                                  |
-| `npm run db:verify`                         | Read-check the application database and test constraints in an isolated in-memory database   |
-| `npm run typecheck`                         | Run the strict TypeScript check                                                              |
-| `npm test`                                  | Run product and order tests against migrated, seeded temporary SQLite databases              |
-| `npm run test:integration`                  | Build and run the production HTTP workflow/restart audit against a temporary SQLite database |
-| `npm run format`                            | Format source, tests, configuration, and documentation with Prettier                         |
-| `npm run format:check`                      | Check formatting without modifying files                                                     |
+```sh
+curl http://localhost:3000/api/products
+curl http://localhost:3000/api/inventory
+```
 
-Prettier is pinned in the development dependencies. Formatting uses two-space indentation, double quotes, semicolons, trailing commas, and a 100-column target. Generated Next.js files, database files, migration artifacts, and the npm lockfile are excluded through `.prettierignore`. Editor integrations can use the project-local Prettier installation and `.prettierrc.json`.
+For production:
 
-Apply migrations explicitly before using the database. Application startup does not apply them automatically. Verification inserts temporary rows only in memory and closes that database afterward; it does not seed or modify application rows.
+```sh
+npm run build
+npm start
+```
 
-The seed uses `src/db/seed.ts` and the existing shared database connection. It adds Wireless Mouse, Mechanical Keyboard, USB-C Hub, Monitor Stand, Webcam HD, and Laptop Sleeve with SKUs `ACC-001` through `ACC-006`, descriptions, integer paise prices, and their initial stock levels. Webcam HD starts with zero stock. All missing products are inserted atomically in one statement. Repeated runs skip existing SKUs entirely, preserving current inventory, product details, and timestamps. Seeding creates no orders, order items, or inventory movements.
+Apply migrations before starting the server. Startup does not migrate or seed automatically. Database setup/testing tools are development dependencies, so run setup while those tools are installed. The SQLite file is supplied at runtime and is not bundled into the build. Deployment requires Node.js, native `better-sqlite3` support, and persistent writable storage for the database and its WAL sidecars; the Edge runtime is not supported.
 
-## Product REST APIs
+## Environment configuration
 
-Run `npm run dev` to serve the endpoints locally, or `npm run build` followed by `npm start` for a production build. Configure and migrate the writable SQLite database before starting the server; its file is supplied at runtime rather than bundled into the build.
+| Variable        | Default              | Meaning                                                          |
+| --------------- | -------------------- | ---------------------------------------------------------------- |
+| `DATABASE_PATH` | `./data/commerce.db` | SQLite filesystem path, relative to the project root or absolute |
 
-| Endpoint                                           | Behavior                                                      |
-| -------------------------------------------------- | ------------------------------------------------------------- |
-| `GET /api/products`                                | Return all products ordered by ID                             |
-| `GET /api/products?search=mouse`                   | Case-insensitive literal substring search across name and SKU |
-| `GET /api/products?stock=in_stock`                 | Return products with stock greater than zero                  |
-| `GET /api/products?stock=out_of_stock`             | Return products with zero stock                               |
-| `GET /api/products?search=acc-&stock=out_of_stock` | Combine search and stock conditions                           |
-| `GET /api/products/1`                              | Return the product with the given positive safe integer ID    |
+Copy `.env.example` to `.env.local` or set the variable in the process environment. Database commands share Next.js environment loading through `@next/env`. An empty path fails Zod validation. Use a filesystem path, not a connection URL or `file:` URI.
 
-`search` is optional and must contain 1–200 characters after trimming. `stock` is optional and accepts exactly `in_stock` or `out_of_stock`. Empty values, repeated parameters, unknown parameters, and invalid IDs return HTTP 400. A missing product returns HTTP 404; an empty search result returns HTTP 200 with an empty array. Product dates are ISO strings and `priceCents` contains integer paise. Both endpoints use the Node.js runtime and return `Cache-Control: no-store` so stock reads stay current.
+For deployment, use an absolute path on a persistent volume, for example `/var/lib/commerce/commerce.db`. Keep it server-side; never use a `NEXT_PUBLIC_` prefix. Next.js selects the environment through its `dev`, `build`, and `start` commands. Local environment files, databases, dependencies, and build output are ignored by Git. Commit `.env.example`, the lockfile, migration SQL, and migration metadata.
 
-Successful responses use `{ "success": true, "data": ... }`, where `data` is a product array for the list endpoint and a product object for the detail endpoint. For example, a search with no matches returns:
+## Architecture
+
+```text
+src/
+  app/api/
+    products/                  # Product list and details
+    orders/                    # Creation, listing, details, fulfilment, cancellation
+    inventory/                 # Current inventory and movement history
+  services/
+    product.service.ts         # Product queries reused by inventory
+    order.service.ts           # Atomic creation, fulfilment, and cancellation rules
+    order-query.service.ts     # Order queries and historical details
+    inventory.service.ts       # Inventory records and stored movement queries
+  lib/
+    api-response.ts            # Shared JSON envelopes and error types
+    validations/               # Zod schemas and shared query/pagination parsing
+  db/
+    index.ts                   # Shared application connection
+    connection.ts, config.ts   # Connection factory, SQLite pragmas, environment
+    types.ts                   # Inferred database types and status unions
+    schema/                    # Four table definitions
+    migrations/                # Generated SQL, journal, and snapshots
+    migrate.ts, seed.ts         # Database setup commands
+    inspect.ts, verify.ts       # Inspection and constraint verification
+tests/
+  *.test.ts                    # Route, service, contract, and concurrency tests
+  helpers/                     # Separate-process contention workers
+  integration/backend.test.ts # Production HTTP workflows and restart persistence
+```
+
+Handlers handle HTTP transport and shared responses. Services own queries and business rules; order mutation services validate inputs themselves. The connection is cached across development hot reloads. Connections enable foreign keys and a five-second busy timeout; file-backed databases use WAL mode.
+
+Mutations use synchronous Drizzle transactions with `behavior: "immediate"`. All related reads and writes run inside one transaction. Conditional stock/status updates must affect exactly one row. Multi-query order/history reads share a read snapshot. Drizzle binds query values; search wildcard characters are treated literally. Inventory list/detail queries reuse product services.
+
+## Database schema
+
+TypeScript properties use camelCase; SQL columns use snake_case. IDs are automatically incremented integer primary keys. Required foreign keys use `ON DELETE RESTRICT` and `ON UPDATE CASCADE` to preserve related history.
+
+### Products
+
+| Field         | SQL column    | Type and constraint                              |
+| ------------- | ------------- | ------------------------------------------------ |
+| `id`          | `id`          | Integer primary key                              |
+| `name`        | `name`        | Required text                                    |
+| `sku`         | `sku`         | Required unique text                             |
+| `description` | `description` | Required text, default empty string              |
+| `priceCents`  | `price_cents` | Required non-negative safe integer paise         |
+| `stock`       | `stock`       | Required non-negative safe integer, default 0    |
+| `createdAt`   | `created_at`  | Required Unix milliseconds with creation default |
+| `updatedAt`   | `updated_at`  | Required Unix milliseconds with creation default |
+
+### Orders
+
+| Field        | SQL column    | Type and constraint                                             |
+| ------------ | ------------- | --------------------------------------------------------------- |
+| `id`         | `id`          | Integer primary key                                             |
+| `reference`  | `reference`   | Required unique text; generated as `ORD-` plus a UUID           |
+| `status`     | `status`      | `PLACED`, `PACKED`, `SHIPPED`, or `CANCELLED`; default `PLACED` |
+| `totalCents` | `total_cents` | Required non-negative safe integer paise                        |
+| `createdAt`  | `created_at`  | Required Unix milliseconds with creation default                |
+| `updatedAt`  | `updated_at`  | Required Unix milliseconds with creation default                |
+
+Indexes cover reference uniqueness, creation date, and status plus creation date.
+
+### Order items
+
+| Field            | SQL column         | Type and constraint                               |
+| ---------------- | ------------------ | ------------------------------------------------- |
+| `id`             | `id`               | Integer primary key                               |
+| `orderId`        | `order_id`         | Required foreign key to `orders.id`               |
+| `productId`      | `product_id`       | Required foreign key to `products.id`             |
+| `quantity`       | `quantity`         | Required positive safe integer                    |
+| `unitPriceCents` | `unit_price_cents` | Required non-negative safe integer price snapshot |
+| `createdAt`      | `created_at`       | Required Unix milliseconds with creation default  |
+
+The order/product pair is unique. A product index and the composite unique index cover foreign-key lookups.
+
+### Inventory movements
+
+| Field       | SQL column   | Type and constraint                              |
+| ----------- | ------------ | ------------------------------------------------ |
+| `id`        | `id`         | Integer primary key                              |
+| `productId` | `product_id` | Required foreign key to `products.id`            |
+| `orderId`   | `order_id`   | Required foreign key to `orders.id`              |
+| `type`      | `type`       | `ORDER_PLACED` or `ORDER_CANCELLED`              |
+| `quantity`  | `quantity`   | Required positive safe integer                   |
+| `createdAt` | `created_at` | Required Unix milliseconds with creation default |
+
+The order/product/type combination is unique. Indexes cover product/date history and order/product/type lookups.
+
+CHECK constraints reject fractional values, nonnumeric text, negative money/stock, non-positive quantities, unsafe numeric ranges, and invalid status/type values. The numeric ceiling is `Number.MAX_SAFE_INTEGER` (9007199254740991). Money is integer INR paise despite the existing `Cents` names: 799 INR is `79900`. `BigInt` intermediates protect money multiplication/addition from overflow before conversion to supported numeric fields.
+
+Dates are mapped to JavaScript `Date` values and serialized as UTC ISO strings. Database creation defaults have one-second precision. Drizzle refreshes `updatedAt` on ORM updates unless explicitly supplied; direct SQL writers must set it themselves. External SQLite tools must enable `PRAGMA foreign_keys = ON` on their own connections.
+
+## Migrations and seeding
+
+```sh
+npm run db:migrate
+npm run db:seed
+npm run db:inspect
+npm run db:verify
+```
+
+The initial migration is `src/db/migrations/0000_initial_schema.sql`. `drizzle.config.ts` discovers `src/db/schema/index.ts` and writes migrations and metadata to `src/db/migrations/`. The migrator tracks applied migrations so reruns apply only pending changes. Commit SQL, journal, and snapshots together. To change a schema, update its definition and create a new migration rather than editing an already-applied file:
+
+```sh
+npm run db:generate -- --name=describe_change
+npm run db:migrate
+```
+
+Seeding inserts these products with descriptions in one atomic statement:
+
+| Product             | SKU     | Price in paise | Initial stock |
+| ------------------- | ------- | -------------- | ------------- |
+| Wireless Mouse      | ACC-001 | 79900          | 25            |
+| Mechanical Keyboard | ACC-002 | 249900         | 10            |
+| USB-C Hub           | ACC-003 | 149900         | 15            |
+| Monitor Stand       | ACC-004 | 119900         | 8             |
+| Webcam HD           | ACC-005 | 199900         | 0             |
+| Laptop Sleeve       | ACC-006 | 59900          | 30            |
+
+Existing SKUs are skipped entirely. Repeated seeds preserve inventory, prices, descriptions, IDs, and timestamps; no orders or movements are created. A partial seed receives only missing products. Current stock comes from `products`, not a reconstruction of movement history: initial seed inventory has no movement records.
+
+## Development commands
+
+| Command                                     | Purpose                                                                |
+| ------------------------------------------- | ---------------------------------------------------------------------- |
+| `npm run dev`                               | Start development API server, normally on port 3000                    |
+| `npm run build`                             | Build production application and validate route types                  |
+| `npm start`                                 | Serve the production build                                             |
+| `npm run typecheck`                         | Strict TypeScript check without emission                               |
+| `npm run format`                            | Format source, tests, configuration, and documentation                 |
+| `npm run format:check`                      | Check formatting without changing files                                |
+| `npm test`                                  | Run route/service/contract tests and separate-process contention tests |
+| `npm run test:integration`                  | Build and run production HTTP tests on a temporary database            |
+| `npm run db:generate -- --name=description` | Generate a migration                                                   |
+| `npm run db:migrate`                        | Apply pending migrations                                               |
+| `npm run db:seed`                           | Insert missing seed products                                           |
+| `npm run db:inspect`                        | Display tables, indexes, counts, and foreign-key integrity             |
+| `npm run db:studio`                         | Open Drizzle Studio for inspection                                     |
+| `npm run db:verify`                         | Verify configured database and exercise constraints in memory          |
+
+Prettier is pinned and configured in `.prettierrc.json`. Generated Next.js files, migrations, databases, and the lockfile are excluded through `.prettierignore`. For a different development port, use `npm run dev -- --port 3001`.
+
+## API conventions
+
+All ten implemented methods use `src/lib/api-response.ts`. Success responses have only `success` and `data`:
 
 ```json
 { "success": true, "data": [] }
 ```
 
-A nonexistent product returns HTTP 404:
-
-```json
-{ "success": false, "error": { "code": "NOT_FOUND", "message": "Product not found." } }
-```
-
-Validation errors use the same error envelope with code `VALIDATION_ERROR` and field/message details. Unexpected failures are logged on the server and return HTTP 500 with code `INTERNAL_SERVER_ERROR` and message `An unexpected error occurred.` Database details and stack traces are never included in that response.
-
-Queries live in `src/services/product.service.ts`, Zod validation in `src/lib/validations/product.ts`, and shared JSON response types/helpers in `src/lib/api-response.ts`. The route handlers are under `src/app/api/products/`. Tests in `tests/products.test.ts` cover seeded results, filters, search, valid and invalid IDs, invalid queries, safe failures, and live stock changes using the real schema, migrations, and seed script. Test data is isolated from the application database and removed afterward.
-
-## Order creation API
-
-`POST /api/orders` accepts JSON containing at least one item. Product IDs match the existing integer schema: use a positive safe integer or its decimal digit string. Quantities must be positive safe integer JSON numbers. Duplicate IDs are rejected after normalization, so `1`, `"1"`, and `"01"` identify the same product. Unknown body/item fields, including client-supplied prices, are rejected.
-
-Example request using seeded product IDs:
+`data` is the documented object or array. Empty lists are successful HTTP 200 responses. Application errors use:
 
 ```json
 {
-  "items": [
-    { "productId": "1", "quantity": 2 },
-    { "productId": "2", "quantity": 1 }
-  ]
+  "success": false,
+  "error": { "code": "NOT_FOUND", "message": "Order not found." }
 }
 ```
 
-HTTP 201 returns the shared success envelope with `data.id`, a generated `data.reference` beginning with `ORD-`, `data.status` equal to `PLACED`, `data.items`, `data.totalCents`, and an ISO `data.createdAt`. Each response item contains `productId`, `productName`, `quantity`, and historical `unitPriceCents`. The example request totals 409700 paise using the initial product prices.
+Validation errors may include `error.details`: an array of `{ "field": "items.0.quantity", "message": "..." }`. Use HTTP status and `error.code` for frontend behavior; exact validation wording may vary. Unexpected failures are logged only on the server and return:
 
-| HTTP status | Error code and meaning                                                                                                           |
-| ----------- | -------------------------------------------------------------------------------------------------------------------------------- |
-| 400         | `VALIDATION_ERROR`: invalid JSON/body, duplicate IDs, invalid quantities/IDs, or a total outside the safe integer range          |
-| 404         | `NOT_FOUND`: a requested product does not exist                                                                                  |
-| 409         | `INSUFFICIENT_STOCK`: a requested quantity is unavailable                                                                        |
-| 409         | `INVENTORY_CONFLICT`: a conditional deduction failed or the SQLite writer lock could not be acquired before the existing timeout |
-| 500         | `INTERNAL_SERVER_ERROR`: unexpected failure, with details logged only on the server                                              |
+```json
+{
+  "success": false,
+  "error": { "code": "INTERNAL_SERVER_ERROR", "message": "An unexpected error occurred." }
+}
+```
 
-`src/app/api/orders/route.ts` handles JSON input and shared HTTP responses. `src/services/order.service.ts` validates with `src/lib/validations/order.ts` and implements placement, so callers of the service receive the same input safeguards.
+| HTTP status | Error code              | Meaning                                                                                            |
+| ----------- | ----------------------- | -------------------------------------------------------------------------------------------------- |
+| 200         | None                    | Successful read or status/cancellation update                                                      |
+| 201         | None                    | Order created                                                                                      |
+| 400         | `VALIDATION_ERROR`      | Invalid ID/body/JSON/query, duplicate item, or unsupported total range                             |
+| 404         | `NOT_FOUND`             | Requested product/order does not exist                                                             |
+| 409         | `INSUFFICIENT_STOCK`    | An order item is unavailable                                                                       |
+| 409         | `INVALID_TRANSITION`    | Disallowed/repeated status change or conditional status failure                                    |
+| 409         | `INVENTORY_CONFLICT`    | Lock timeout, conditional inventory failure, restoration overflow, or duplicate restoration record |
+| 500         | `INTERNAL_SERVER_ERROR` | Unexpected failure without database details or stack traces                                        |
 
-The service uses one synchronous Drizzle transaction with `behavior: "immediate"`, which acquires the SQLite writer lock before reading product availability ([SQLite transaction documentation](https://www.sqlite.org/lang_transaction.html)). It reuses the connection's WAL mode and five-second busy timeout. All product reads, price snapshots, stock checks, total calculations, order/item inserts, stock deductions, and `ORDER_PLACED` movement inserts run inside that transaction. Every item is checked before any rows or stock are changed. Deductions use `UPDATE ... WHERE stock >= quantity` and require exactly one affected row. Any thrown failure rolls back the entire transaction. Money multiplication and addition use `BigInt`; only totals within JavaScript's safe integer range are converted to the existing integer paise fields.
+Implemented handlers return `Content-Type: application/json` and `Cache-Control: no-store`. Framework-generated handling of unsupported methods, HEAD/OPTIONS, and unmatched URLs is outside these envelopes. Use JSON bodies where specified; GET bodies are not used.
 
-`tests/orders.test.ts` covers successful orders, exact totals, deductions and movements, input failures, missing products, shortages, full rollback after injected write failures, conditional-update conflicts, writer-lock timeouts, overflow, and price snapshot preservation. The concurrency test uses four separate processes through `tests/helpers/place-order-worker.ts`, each with its own SQLite connection, released against the same limited stock. All fixtures and test mutations use temporary databases; development seed data is preserved.
+IDs are positive safe integers; path IDs contain only decimal digits. Leading zeroes are normalized. Order creation accepts product IDs as numbers or digit strings, with duplicates rejected after normalization. Quantities must be positive safe integer JSON numbers. Money fields are integer paise, not decimal rupees; timestamps are ISO strings.
 
-## Order listing and details APIs
+Frontend clients can use relative same-origin URLs such as `/api/products`. No custom cross-origin policy or authentication layer is configured. Examples below are illustrative: use the IDs and generated references from your database. Seeding creates products only; create an order before testing order list/details/fulfilment examples. An empty order list before placement is expected.
 
-`GET /api/orders` returns paginated order summaries with ID, reference, status, integer paise `totalCents`, and ISO `createdAt`. Orders are sorted by creation timestamp descending, then ID descending to keep equal-date results in a stable order.
+### Shared response records
 
-| Parameter | Validation and behavior                                                                                  |
-| --------- | -------------------------------------------------------------------------------------------------------- |
-| `search`  | Optional case-insensitive literal substring search on the reference; 1–200 characters after trimming     |
-| `status`  | Optional exact value: `PLACED`, `PACKED`, `SHIPPED`, or `CANCELLED`                                      |
-| `page`    | Positive safe integer in decimal digits; defaults to 1; the resulting offset must also be a safe integer |
-| `limit`   | Integer from 1 through 100 in decimal digits; defaults to 20                                             |
+| Record            | Exact fields                                                                        |
+| ----------------- | ----------------------------------------------------------------------------------- |
+| `Product`         | `id`, `name`, `sku`, `description`, `priceCents`, `stock`, `createdAt`, `updatedAt` |
+| `OrderSummary`    | `id`, `reference`, `status`, `totalCents`, `createdAt`                              |
+| `OrderRecord`     | All `OrderSummary` fields plus `updatedAt`; no `items`                              |
+| `CreatedItem`     | `productId`, `productName`, `quantity`, `unitPriceCents`                            |
+| `DetailItem`      | All `CreatedItem` fields plus `id`, `sku`, `subtotalCents`                          |
+| `InventoryRecord` | `id`, `name`, `sku`, `priceCents`, `stock`, `availability`                          |
+| `Movement`        | `id`, `productId`, `orderId`, `orderReference`, `type`, `quantity`, `createdAt`     |
+| `Pagination`      | `page`, `limit`, `total`, `totalPages`                                              |
 
-Search and status conditions are combined with AND. For example, `/api/orders?search=ord-&status=PLACED&page=1&limit=20` returns the first page of matching placed orders. Pagination totals reflect the matching filters. Pages beyond the end return an empty array; an empty result has `totalPages: 0`. Unknown, repeated, empty, or malformed query parameters return HTTP 400.
+Names, references, descriptions, and SKUs are strings; IDs and money/quantity/count fields are numbers. `status` is `PLACED`, `PACKED`, `SHIPPED`, or `CANCELLED`. `availability` is `in_stock` or `out_of_stock`. Movement type is `ORDER_PLACED` or `ORDER_CANCELLED`; its quantity stays positive and type identifies deduction versus restoration.
 
-Example list response when nothing matches:
+### GET /api/products
+
+Return all products ordered by ID ascending. Body: none.
+
+| Query    | Rules                                                                                    |
+| -------- | ---------------------------------------------------------------------------------------- |
+| `search` | Optional case-insensitive name-or-SKU literal substring, 1–200 characters after trimming |
+| `stock`  | Optional `in_stock` (positive stock) or `out_of_stock` (zero stock)                      |
+
+Filters combine with AND. Empty, repeated, unknown, or invalid query values return 400. The list is not paginated. Success: **200**, `{ "success": true, "data": Product[] }`. Errors: **400** `VALIDATION_ERROR`; **500** `INTERNAL_SERVER_ERROR`.
+
+```sh
+curl 'http://localhost:3000/api/products?search=mouse&stock=in_stock'
+```
 
 ```json
 {
   "success": true,
-  "data": {
-    "orders": [],
-    "pagination": { "page": 1, "limit": 20, "total": 0, "totalPages": 0 }
-  }
+  "data": [
+    {
+      "id": 1,
+      "name": "Wireless Mouse",
+      "sku": "ACC-001",
+      "description": "A wireless mouse for comfortable everyday navigation at home or in the office.",
+      "priceCents": 79900,
+      "stock": 25,
+      "createdAt": "2026-11-21T08:00:00.000Z",
+      "updatedAt": "2026-11-21T08:00:00.000Z"
+    }
+  ]
 }
 ```
 
-`GET /api/orders/[id]` requires a positive safe integer ID. Its success envelope contains `data.id`, `reference`, `status`, `totalCents`, `createdAt`, and `items`. Each item includes `id`, `productId`, `productName`, `sku`, `quantity`, historical `unitPriceCents`, and `subtotalCents`. Product names/SKUs come from the product record, while monetary values come from the stored order/item snapshots. Subtotals multiply historical unit prices by quantities using exact integer arithmetic. The order total is read from `orders.totalCents` and is never recalculated from current product prices.
+### GET /api/products/[id]
 
-Both endpoints return HTTP 200 on success, HTTP 400 for invalid parameters, and safe HTTP 500 JSON on unexpected failures. A missing order returns HTTP 404:
+Path: product ID. Query: none consumed; extra query values are ignored. Body: none. Success: **200**, `{ "success": true, "data": Product }`, using the product fields shown above. Errors: **400** `VALIDATION_ERROR` for an invalid ID; **404** `NOT_FOUND` with message `Product not found.`; **500** `INTERNAL_SERVER_ERROR`.
 
-```json
-{ "success": false, "error": { "code": "NOT_FOUND", "message": "Order not found." } }
+```sh
+curl http://localhost:3000/api/products/1
 ```
 
-Read queries live in `src/services/order-query.service.ts`, separate from the existing order creation logic. Each response uses a read transaction so its count/page or header/items share one SQLite snapshot. Filtering and joins use bound Drizzle queries ([Drizzle query documentation](https://orm.drizzle.team/docs/select)); wildcard search characters are treated literally. Both routes use the Node.js runtime and return `Cache-Control: no-store`.
+### POST /api/orders
 
-`tests/order-queries.test.ts` uses a migrated, seeded temporary database and the existing order creation service. It covers all statuses, combined search/filtering, sort order, pagination/defaults/limits, complete details, historical prices, invalid inputs, nonexistent IDs, injection strings, safe failures, and unchanged rows after reads. Status changes in these fixtures do not implement status-transition APIs.
+Query: none consumed. Body: a strict object containing a nonempty `items` array. Every item contains only `productId` and `quantity`. Unknown fields, including supplied prices, are rejected. All products must exist and have sufficient stock.
 
-## Fulfilment and cancellation APIs
-
-Use an existing order ID from order creation or `GET /api/orders`.
-
-`PATCH /api/orders/[id]/status` accepts a strict JSON body:
-
-```json
-{ "status": "PACKED" }
+```sh
+curl -X POST http://localhost:3000/api/orders \
+  -H 'Content-Type: application/json' \
+  -d '{"items":[{"productId":"1","quantity":2}]}'
 ```
 
-Only `PLACED` to `PACKED` and `PACKED` to `SHIPPED` are allowed. Every other transition is rejected, including no-op requests, backwards transitions, and using this endpoint to set `CANCELLED`. Fulfilment never changes stock or inventory movements.
-
-`POST /api/orders/[id]/cancel` requires no body. It allows `PLACED` or `PACKED` to transition to `CANCELLED`. Requests for `SHIPPED` or already `CANCELLED` orders are rejected. Each item restores its quantity to current product stock and creates one `ORDER_CANCELLED` movement, while preserving the original `ORDER_PLACED` movements.
-
-Both endpoints return HTTP 200 with the shared success envelope. `data` contains `id`, `reference`, `status`, `totalCents`, and ISO `createdAt`/`updatedAt`. Item records, historical unit prices, order totals, references, and creation dates remain unchanged.
-
-| HTTP status | Meaning                                                                                                                     |
-| ----------- | --------------------------------------------------------------------------------------------------------------------------- |
-| 400         | `VALIDATION_ERROR`: invalid ID, malformed JSON, unknown status, or invalid status body                                      |
-| 404         | `NOT_FOUND`: the order does not exist                                                                                       |
-| 409         | `INVALID_TRANSITION`: the requested transition is disallowed or a conditional status update failed                          |
-| 409         | `INVENTORY_CONFLICT`: writer-lock timeout, duplicate restoration movement, or a restoration that cannot safely update stock |
-| 500         | `INTERNAL_SERVER_ERROR`: unexpected failure with details logged only on the server                                          |
-
-`updateOrderStatus` and `cancelOrder` extend the existing `src/services/order.service.ts`; order creation logic is preserved. Both validate inputs in the service and use the existing connection with one synchronous immediate transaction per operation. They fetch the order after obtaining the writer lock and conditionally update only its expected current status. Cancellation then restores every item's stock and inserts its cancellation movement before committing. Restoration also guards the existing maximum safe integer stock limit.
-
-Repeated or competing cancellation requests cannot restore stock twice: the status check rejects completed cancellation, the conditional update checks the expected status, and the existing unique order/product/movement-type index rejects duplicate records. Duplicate inserts are never silently ignored; they throw so the status change, all stock restorations, and all new movements roll back together. Any other failure has the same all-or-nothing behavior. Existing WAL mode and the five-second busy timeout are reused.
-
-`tests/order-transitions.test.ts` covers the full status-transition matrix, cancellation from both eligible states, forbidden/repeated requests, multi-item restoration, original history, invalid/nonexistent IDs, malformed payloads, stock overflow, unique constraints, writer-lock timeout, conditional-update failures, and failures after earlier items have been restored. `tests/helpers/order-transition-worker.ts` runs separate SQLite connections for simultaneous cancellations, duplicate fulfilment, and shipping versus cancellation. Every test uses a temporary database.
-
-## Inventory and movement history APIs
-
-| Endpoint                                                   | Behavior                                                                               |
-| ---------------------------------------------------------- | -------------------------------------------------------------------------------------- |
-| `GET /api/inventory`                                       | List all products with current stock, name, SKU, integer paise price, and availability |
-| `GET /api/inventory?search=mouse&stock=in_stock`           | Combine case-insensitive name/SKU search with current stock filtering                  |
-| `GET /api/inventory/[productId]`                           | Return one product's inventory details                                                 |
-| `GET /api/inventory/[productId]/movements?page=1&limit=20` | Return paginated stored movement history for one product                               |
-
-Inventory records contain `id`, `name`, `sku`, `priceCents`, `stock`, and `availability`. Availability is `in_stock` when stock is positive and `out_of_stock` when stock is zero. The list reuses product search/stock validation and queries: `search` accepts 1–200 characters after trimming and `stock` accepts `in_stock` or `out_of_stock`. The list returns the shared success envelope with an array in `data`; individual inventory returns a single record in `data` and does not accept query parameters.
-
-Example individual inventory response for a newly seeded mouse:
+Success: **201**, with `OrderSummary` fields plus `items: CreatedItem[]`:
 
 ```json
 {
   "success": true,
   "data": {
     "id": 1,
-    "name": "Wireless Mouse",
-    "sku": "ACC-001",
-    "priceCents": 79900,
-    "stock": 25,
-    "availability": "in_stock"
+    "reference": "ORD-8f587cde-36d5-4799-b354-57572d1bd942",
+    "status": "PLACED",
+    "items": [
+      { "productId": 1, "productName": "Wireless Mouse", "quantity": 2, "unitPriceCents": 79900 }
+    ],
+    "totalCents": 159800,
+    "createdAt": "2026-11-21T08:01:00.000Z"
   }
 }
 ```
 
-Movement responses contain `data.product`, `data.movements`, and `data.pagination`. The product is the current inventory record. Every movement includes its existing `id`, `productId`, `orderId`, `orderReference`, `type`, positive integer `quantity`, and ISO `createdAt`. `ORDER_PLACED` records represent deductions and `ORDER_CANCELLED` records represent restorations. Records are sorted by timestamp descending and then ID descending, using the original stored timestamps and movement IDs.
+Errors: **400** `VALIDATION_ERROR` for invalid JSON, items, duplicate IDs, quantities/IDs, or total overflow; **404** `NOT_FOUND` for a missing product; **409** `INSUFFICIENT_STOCK` or `INVENTORY_CONFLICT`; **500** `INTERNAL_SERVER_ERROR`. Failure rolls back all order, item, stock, and movement writes.
 
-Pagination accepts positive decimal integer `page` and `limit` parameters, defaults to page 1/limit 20, limits pages to at most 100 entries, and validates safe offsets. These rules are shared with order listing through `src/lib/validations/pagination.ts`. Existing products without movements return HTTP 200 with an empty array, `total: 0`, and `totalPages: 0`. Pages beyond the end are empty and retain the full matching count. Missing products return HTTP 404 for both detail and history endpoints. Invalid IDs, unknown/repeated query parameters, or invalid pagination return HTTP 400. Unexpected failures use safe HTTP 500 JSON.
+### GET /api/orders
 
-`src/services/inventory.service.ts` reuses the product service for current inventory and reads stored movements joined to orders for their references. History uses one read transaction for a consistent product/count/page snapshot. Current stock always comes from `products`, rather than being reconstructed from movement history. The endpoints never update stock or insert movement records and reuse the order placement/cancellation records already produced by the existing order service. No stock adjustment API is provided. All inventory routes use the Node.js runtime and `Cache-Control: no-store`.
+Return order summaries sorted by creation date descending, then ID descending. Body: none.
 
-`tests/inventory.test.ts` uses a migrated, seeded temporary database and the existing order creation/cancellation services. Tests cover all inventory filters, details, placement/restoration movement values, references, newest-first ordering, pagination, invalid inputs, missing products, safe failures, and repeated reads. They also run all three inventory GET endpoints with SQLite writes disabled and compare every application row before and after to verify read-only behavior.
+| Query    | Rules                                                                                  |
+| -------- | -------------------------------------------------------------------------------------- |
+| `search` | Optional case-insensitive literal reference substring, 1–200 characters after trimming |
+| `status` | Optional exact `PLACED`, `PACKED`, `SHIPPED`, or `CANCELLED`                           |
+| `page`   | Positive safe integer in decimal digits; default 1                                     |
+| `limit`  | Integer 1–100 in decimal digits; default 20                                            |
 
-## Database modules
+Filters use AND; totals count matching orders. Empty/repeated/unknown values and unsafe computed offsets are rejected. Beyond-last pages are empty but retain totals. No matches means `total: 0` and `totalPages: 0`.
 
-- `src/db/index.ts` exports the reusable `db` connection, cached across development hot reloads.
-- `src/db/connection.ts` creates connections with foreign keys enabled, WAL mode, and a five-second busy timeout.
-- `src/db/config.ts` loads and validates database environment configuration with Zod.
-- `src/db/schema/` contains the four table definitions and a shared export module.
-- `src/db/types.ts` exports inferred read and insert types for every table, database types, and status/type unions.
-- `src/db/migrations/` contains the generated initial SQL migration and Drizzle metadata.
-- `src/db/migrate.ts`, `inspect.ts`, and `verify.ts` provide the database commands.
-- `drizzle.config.ts` configures schema discovery, migration output, and Studio access.
+Success: **200**, `{ "success": true, "data": { "orders": OrderSummary[], "pagination": Pagination } }`. Errors: **400** `VALIDATION_ERROR`; **500** `INTERNAL_SERVER_ERROR`.
 
-Import `db` from `@/db` only in server code running in the Node.js runtime. The native `better-sqlite3` driver requires a writable local filesystem. External SQLite tools must enable `PRAGMA foreign_keys = ON` on their own connections.
+```sh
+curl 'http://localhost:3000/api/orders?status=PLACED&page=1&limit=20'
+```
 
-## Schema guarantees
+```json
+{
+  "success": true,
+  "data": {
+    "orders": [
+      {
+        "id": 1,
+        "reference": "ORD-8f587cde-36d5-4799-b354-57572d1bd942",
+        "status": "PLACED",
+        "totalCents": 159800,
+        "createdAt": "2026-11-21T08:01:00.000Z"
+      }
+    ],
+    "pagination": { "page": 1, "limit": 20, "total": 1, "totalPages": 1 }
+  }
+}
+```
 
-All IDs are automatically incremented integer primary keys. TypeScript field names use camelCase and SQL columns use snake_case. SKU and order reference values are unique. Order items have a unique order/product pair, and inventory movements have a unique order/product/type combination. All foreign keys are required, restrict parent deletion, and cascade parent ID updates. Their lookup columns are covered by indexes; orders also have status/date and date indexes.
+### GET /api/orders/[id]
 
-Money is stored in integer cents. Database checks require non-negative integer money and stock, and positive integer item and movement quantities. These values are bounded by JavaScript's maximum safe integer. SQLite checks also reject fractional values and nonnumeric text, even for direct SQL writes. Order statuses and movement types are constrained in both TypeScript and SQLite.
+Path: order ID. Query: none consumed; extra values are ignored. Body: none. Success: **200**, with `OrderSummary` fields plus `items: DetailItem[]`. Monetary values use stored snapshots; total is read from the order. Product name/SKU are current descriptive metadata, not historical name/SKU snapshots.
 
-Timestamps are stored as Unix milliseconds and mapped to JavaScript `Date` values. Database creation defaults have one-second precision. Drizzle refreshes `updatedAt` on ORM updates unless a value is explicitly supplied; direct SQL writers must set `updatedAt` themselves.
+```json
+{
+  "success": true,
+  "data": {
+    "id": 1,
+    "reference": "ORD-8f587cde-36d5-4799-b354-57572d1bd942",
+    "status": "PLACED",
+    "totalCents": 159800,
+    "createdAt": "2026-11-21T08:01:00.000Z",
+    "items": [
+      {
+        "id": 1,
+        "productId": 1,
+        "productName": "Wireless Mouse",
+        "sku": "ACC-001",
+        "quantity": 2,
+        "unitPriceCents": 79900,
+        "subtotalCents": 159800
+      }
+    ]
+  }
+}
+```
 
-Order placement calculates totals, deducts stock, and writes inventory movements through its transaction. Fulfilment changes only allowed statuses. Cancellation restores item quantities and records inventory movements in one transaction without modifying historical prices or totals.
+Errors: **400** `VALIDATION_ERROR` for an invalid ID; **404** `NOT_FOUND` with message `Order not found.`; **500** `INTERNAL_SERVER_ERROR`.
 
-## Backend audit
+### PATCH /api/orders/[id]/status
 
-The November 21, 2026 audit executed `npm test` (245 passing tests) and `npm run test:integration` (10 passing tests covering 55 real HTTP requests). The integration command builds the production application, starts it on an available localhost port with a temporary SQLite file, and restarts it against the same file. It requires permission to listen on localhost. Development rows are read before and after and verified unchanged; temporary files and server processes are removed when testing finishes.
+Path: order ID. Query: none consumed. Body: a strict JSON object containing only `status`.
 
-`tests/integration/backend.test.ts` runs the required workflows in order against one database:
+```sh
+curl -X PATCH http://localhost:3000/api/orders/1/status \
+  -H 'Content-Type: application/json' -d '{"status":"PACKED"}'
+```
 
-- Workflow A orders two mice, verifies stock 25 to 23, retrieves details, packs and ships, rejects cancellation, and verifies stock remains 23.
-- Workflow B orders three mice from the remaining 23, verifies 20, cancels back to 23, rejects a second cancellation, and verifies exactly one cancellation movement for that order/product.
-- Workflow C submits two available products and an out-of-stock webcam, rejects the whole order, and verifies every product, order, item, and movement row is unchanged.
+Only `PLACED` to `PACKED` and `PACKED` to `SHIPPED` succeed. Recognized but disallowed targets, including `PLACED` and `CANCELLED`, return 409; unknown status strings return 400. Fulfilment does not change stock.
 
-Additional integration checks inject late placement/cancellation failures, verify safe HTTP 500 responses and complete rollback, verify successful cancellation retry, change current prices while checking historical snapshots, repeat migrations/seeding without resetting inventory, and verify statuses/stock/prices/items/movements after an application process restart. The existing suite also reruns real separate-process order/cancellation contention and shipping/cancellation races.
+Success: **200**, `{ "success": true, "data": OrderRecord }`:
 
-The integration suite invokes the existing database verifier: all four tables, connection foreign keys, repeat migration safety, and 41 invalid-write constraint checks passed. `PRAGMA foreign_key_check` returned no violations and `PRAGMA integrity_check` returned `ok`. Drizzle's migration consistency check passed, and schema generation reported no changes to migrate. Strict TypeScript checks, formatting checks, and the production build passed.
+```json
+{
+  "success": true,
+  "data": {
+    "id": 1,
+    "reference": "ORD-8f587cde-36d5-4799-b354-57572d1bd942",
+    "status": "PACKED",
+    "totalCents": 159800,
+    "createdAt": "2026-11-21T08:01:00.000Z",
+    "updatedAt": "2026-11-21T08:02:00.000Z"
+  }
+}
+```
 
-No business-logic defect was reproduced, no missing required constraint or incorrect transaction boundary was found, and no production service rewrite was needed. The audit closes the missing repeatable full-workflow/restart coverage with the integration suite and command. Existing services centralize stock mutation and movement creation. Order listing and movement history use bounded pagination; joins and read snapshots avoid per-item queries and inconsistent multi-query responses.
+Errors: **400** `VALIDATION_ERROR` for ID/body/JSON; **404** `NOT_FOUND`; **409** `INVALID_TRANSITION` or `INVENTORY_CONFLICT`; **500** `INTERNAL_SERVER_ERROR`.
 
-The dependency audit reports zero runtime findings with `npm audit --omit=dev`. The full `npm audit` still reports four moderate findings in Drizzle Kit's development-only esbuild dependency chain. Its proposed fix is a breaking downgrade of Drizzle Kit, so the working migration tooling is retained and these findings remain open. Backend behavior is ready for frontend integration and the local hackathon demo within the tested scope. Deployment requires the existing Node.js runtime and a persistent writable SQLite filesystem.
+### POST /api/orders/[id]/cancel
+
+Path: order ID. Query: none consumed. No body is required or read. Allows `PLACED` or `PACKED` to become `CANCELLED`; shipped/already cancelled orders return 409.
+
+```sh
+curl -X POST http://localhost:3000/api/orders/1/cancel
+```
+
+Success: **200**, `{ "success": true, "data": OrderRecord }`, with `status: "CANCELLED"`. Fields match the fulfilment response; totals and creation dates do not change. Stock restoration, conditional status change, and cancellation movements commit together.
+
+Errors: **400** `VALIDATION_ERROR` for an invalid ID; **404** `NOT_FOUND`; **409** `INVALID_TRANSITION` or `INVENTORY_CONFLICT`; **500** `INTERNAL_SERVER_ERROR`. Repeat cancellation never restores twice. Duplicate restoration movements trigger full rollback rather than being silently ignored.
+
+### GET /api/inventory
+
+Query: the same `search` and `stock` rules as the product list, including AND combinations and rejection of unknown/repeated/invalid values. Body: none. Lists matching inventory ordered by product ID. Stock is read from products; availability is derived from positive versus zero stock. The list is not paginated.
+
+Success: **200**, `{ "success": true, "data": InventoryRecord[] }`:
+
+```json
+{
+  "success": true,
+  "data": [
+    {
+      "id": 1,
+      "name": "Wireless Mouse",
+      "sku": "ACC-001",
+      "priceCents": 79900,
+      "stock": 25,
+      "availability": "in_stock"
+    }
+  ]
+}
+```
+
+Errors: **400** `VALIDATION_ERROR`; **500** `INTERNAL_SERVER_ERROR`. Viewing inventory creates no movements.
+
+### GET /api/inventory/[productId]
+
+Path: product ID. Query: none allowed; any query parameter returns 400. Body: none. Success: **200**, `{ "success": true, "data": InventoryRecord }`, with the fields shown in the inventory array above.
+
+Errors: **400** `VALIDATION_ERROR`; **404** `NOT_FOUND` with message `Product not found.`; **500** `INTERNAL_SERVER_ERROR`.
+
+### GET /api/inventory/[productId]/movements
+
+Path: product ID. Query: only `page` and `limit`, using the order-list rules (defaults 1/20, maximum limit 100, safe offset). Body: none. Unknown/repeated/invalid query values return 400. History is sorted by timestamp descending and movement ID descending, using stored placement/cancellation records joined to order references.
+
+Success: **200**, `{ "success": true, "data": { "product": InventoryRecord, "movements": Movement[], "pagination": Pagination } }`:
+
+```json
+{
+  "success": true,
+  "data": {
+    "product": {
+      "id": 1,
+      "name": "Wireless Mouse",
+      "sku": "ACC-001",
+      "priceCents": 79900,
+      "stock": 23,
+      "availability": "in_stock"
+    },
+    "movements": [
+      {
+        "id": 1,
+        "productId": 1,
+        "orderId": 1,
+        "orderReference": "ORD-8f587cde-36d5-4799-b354-57572d1bd942",
+        "type": "ORDER_PLACED",
+        "quantity": 2,
+        "createdAt": "2026-11-21T08:01:00.000Z"
+      }
+    ],
+    "pagination": { "page": 1, "limit": 20, "total": 1, "totalPages": 1 }
+  }
+}
+```
+
+An existing product with no movements returns 200 with an empty array and zero counts. Beyond-last pages are empty but retain totals. Errors: **400** `VALIDATION_ERROR`; **404** `NOT_FOUND` for a missing product; **500** `INTERNAL_SERVER_ERROR`.
+
+## Business rules
+
+- Order items are nonempty, unique by normalized product ID, and have positive integer quantities. Prices come from SQLite, not the request.
+- Creation validates all stock before writes, saves unit-price snapshots, creates a `PLACED` order, deducts stock, and writes `ORDER_PLACED` movements in one immediate transaction.
+- Any unavailable product rejects the entire order. No partial stock deduction, order, item, or movement survives failure.
+- Fulfilment allows only `PLACED` to `PACKED` to `SHIPPED`. No-op, backwards, and all other transitions are rejected.
+- Cancellation allows only `PLACED`/`PACKED` to become `CANCELLED`, adding quantities to current stock and recording `ORDER_CANCELLED` once per order/product.
+- Immediate locking, conditional updates, and unique movement keys protect concurrent mutations. Timeouts return 409 without partial changes; cancellation also guards stock overflow.
+- Cancellation preserves items, original movements, price snapshots, totals, references, and creation timestamps. Product price changes never alter previous orders.
+- GET endpoints never mutate stock or create movements. No manual stock adjustment, product mutation, order deletion, or frontend functionality is implemented.
+
+## Testing and verification
+
+```sh
+npm run typecheck
+npm run format:check
+npm test
+npm run test:integration
+```
+
+The route/service suite uses migrated, seeded temporary SQLite files and separate processes for real writer contention. `tests/api-contract.test.ts` validates every implemented method's success fields, error envelopes, status codes, ISO dates, and integer amounts without changing production contracts.
+
+The integration command builds Next.js, starts a production server on an available localhost port using an isolated database, and restarts it against the same file. It needs permission to listen on localhost. No external service is required. If a development database exists, its application rows are compared before and after. Temporary servers and files are cleaned up.
+
+| Production workflow | Checks                                                                                                  |
+| ------------------- | ------------------------------------------------------------------------------------------------------- |
+| A: fulfilment       | Order two mice; stock 25 to 23; retrieve details; pack; ship; reject cancellation; retain 23            |
+| B: cancellation     | Order three mice from 23; stock 20; cancel back to 23; reject repeat; exactly one cancellation movement |
+| C: unavailable item | Two available products plus zero-stock webcam reject all; every application row remains unchanged       |
+
+Additional checks cover late-write rollback and safe 500 errors, retry after cancellation failure, historical prices, repeat migrations/seeds, invalid inputs, and persistence after restart. The database verifier checks all four tables, foreign-key enforcement/integrity, repeat migrations, and 41 invalid-write constraints in memory. Inventory GET tests also run with SQLite writes disabled.
+
+For migration metadata consistency, run `node node_modules/drizzle-kit/bin.cjs check`. Schema generation should report no changes on an unchanged checkout. Formatting excludes generated migrations and metadata.
+
+## Submission and remaining issues
+
+All ten API methods, reproducible setup, persistent SQLite storage, and contract/business/integration tests are included. Keep migration files and the lockfile in the submission. Seed products are reproducible; databases and local environment files are excluded. README examples insert orders only if you execute their POST commands.
+
+Backend finalization on November 21, 2026 executed 262 route/service/contract tests and 10 production HTTP integration tests (55 HTTP requests), all passing. The production build, strict TypeScript, formatting, migration consistency, and schema drift checks passed. Clean database setup, repeated seeding without inventory/price resets, application restart persistence, and 41 invalid-write constraint checks passed. Development database rows remained unchanged.
+
+The final dependency audit reports zero runtime findings and four moderate findings in Drizzle Kit's development-only esbuild chain. npm proposes a breaking downgrade, so working migration tooling is retained. A compatible upstream resolution remains outstanding. Authentication, custom CORS, frontend components, and general production hardening are outside the implemented hackathon scope.
