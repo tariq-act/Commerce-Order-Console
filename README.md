@@ -1,6 +1,6 @@
 # Fynd Commerce Order Console
 
-Backend for the Fynd Hiring Hackathon Commerce Order Console. It provides a product catalogue, atomic order placement, order search and details, fulfilment, cancellation with exactly-once stock restoration, and inventory movement history. No frontend pages or components are implemented.
+Fynd Hiring Hackathon Commerce Order Console with a complete backend and a responsive frontend foundation. It provides a product catalogue, atomic order placement, order search and details, fulfilment, cancellation with exactly-once stock restoration, and inventory movement history. The dashboard displays live order metrics, recent orders, and low-stock products from SQLite. Other feature pages remain placeholders for subsequent integration steps.
 
 ## Technology stack
 
@@ -14,7 +14,7 @@ Backend for the Fynd Hiring Hackathon Commerce Order Console. It provides a prod
 | Node.js test runner and tsx | Isolated tests and production HTTP integration tests       |
 | Prettier                    | Consistent formatting                                      |
 
-React is installed for Next.js compatibility. Runtime versions and the exact dependency tree are recorded in `package.json` and `package-lock.json`.
+The frontend uses TanStack Query for server state, Sonner for error notifications, React, Tailwind CSS 4, Radix UI primitives, Lucide icons, and shadcn/ui-style components configured in `components.json`. Class composition uses clsx, tailwind-merge, and class-variance-authority. Runtime versions and the exact dependency tree are recorded in `package.json` and `package-lock.json`.
 
 ## Installation
 
@@ -28,7 +28,7 @@ npm run db:seed
 npm run dev
 ```
 
-The local API base URL is `http://localhost:3000/api`. The project serves API routes without a frontend homepage. Check the seed with:
+The local API base URL is `http://localhost:3000/api`. Open `http://localhost:3000` for the console; the root redirects to `/dashboard`. Check the seed with:
 
 ```sh
 curl http://localhost:3000/api/products
@@ -44,11 +44,29 @@ npm start
 
 Apply migrations before starting the server. Startup does not migrate or seed automatically. Database setup/testing tools are development dependencies, so run setup while those tools are installed. The SQLite file is supplied at runtime and is not bundled into the build. Deployment requires Node.js, native `better-sqlite3` support, and persistent writable storage for the database and its WAL sidecars; the Edge runtime is not supported.
 
+## Frontend foundation
+
+| Route          | Current interface                                                         |
+| -------------- | ------------------------------------------------------------------------- |
+| `/dashboard`   | Live KPI cards, five recent orders, low-stock products, and quick actions |
+| `/products`    | Catalogue placeholder                                                     |
+| `/orders`      | Order list placeholder with navigation to New order                       |
+| `/orders/new`  | Order creation placeholder                                                |
+| `/orders/[id]` | Order details placeholder (no data lookup or ID validation yet)           |
+| `/inventory`   | Inventory placeholder                                                     |
+
+The shared layout provides a collapsible desktop sidebar, breadcrumbs, profile and notification menus, a workspace guide, and a mobile navigation dialog below 1024px. Sidebar collapse preference is stored locally in the browser. The profile represents the local workspace; authentication and notification delivery are not implemented.
+
+Design tokens live in `src/app/globals.css`. Reusable components include Button, Input, Select, Card, Badge, Table, Dialog, DropdownMenu, Skeleton, EmptyState, PageHeader, and OrderStatusBadge. Dialogs, menus, and selects use Radix keyboard/focus handling. The shell includes semantic landmarks, a skip link, labelled icon controls, responsive grids, and reduced-motion support. System fonts keep builds independent of external font services.
+
+Use `npm run dev` and open the localhost URL printed by Next.js. Production builds use Next.js's supported Webpack compiler because the restricted local environment prevents Turbopack's CSS worker from binding its internal port. This does not change API contracts. Verify the layout at desktop, tablet, and mobile widths, open the mobile navigation and menus, and check the placeholder links. The dashboard is read-only. Product, order and inventory feature pages remain placeholders.
+
 ## Environment configuration
 
-| Variable        | Default              | Meaning                                                          |
-| --------------- | -------------------- | ---------------------------------------------------------------- |
-| `DATABASE_PATH` | `./data/commerce.db` | SQLite filesystem path, relative to the project root or absolute |
+| Variable                        | Default              | Meaning                                                          |
+| ------------------------------- | -------------------- | ---------------------------------------------------------------- |
+| `DATABASE_PATH`                 | `./data/commerce.db` | SQLite filesystem path, relative to the project root or absolute |
+| `DASHBOARD_LOW_STOCK_THRESHOLD` | `5`                  | Non-negative integer stock warning threshold (inclusive)         |
 
 Copy `.env.example` to `.env.local` or set the variable in the process environment. Database commands share Next.js environment loading through `@next/env`. An empty path fails Zod validation. Use a filesystem path, not a connection URL or `file:` URI.
 
@@ -58,11 +76,19 @@ For deployment, use an absolute path on a persistent volume, for example `/var/l
 
 ```text
 src/
+  app/(dashboard)/             # Shared dashboard shell and placeholder routes
+  components/
+    layout/                    # Sidebar, header, mobile navigation, workspace dialogs
+    ui/                        # Reusable shadcn/ui-style Radix and HTML primitives
+    shared/                    # Page headers, empty states, status badges, placeholders
+  hooks/use-sidebar.ts         # Sidebar persistence and mobile navigation state
   app/api/
     products/                  # Product list and details
     orders/                    # Creation, listing, details, fulfilment, cancellation
     inventory/                 # Current inventory and movement history
+  features/dashboard/          # Dashboard components, query hook, and validated API contract
   services/
+    dashboard.service.ts       # Read-only snapshot aggregation across all orders
     product.service.ts         # Product queries reused by inventory
     order.service.ts           # Atomic creation, fulfilment, and cancellation rules
     order-query.service.ts     # Order queries and historical details
@@ -255,6 +281,29 @@ Frontend clients can use relative same-origin URLs such as `/api/products`. No c
 | `Pagination`      | `page`, `limit`, `total`, `totalPages`                                              |
 
 Names, references, descriptions, and SKUs are strings; IDs and money/quantity/count fields are numbers. `status` is `PLACED`, `PACKED`, `SHIPPED`, or `CANCELLED`. `availability` is `in_stock` or `out_of_stock`. Movement type is `ORDER_PLACED` or `ORDER_CANCELLED`; its quantity stays positive and type identifies deduction versus restoration.
+
+### GET /api/dashboard
+
+No query parameters or request body. Returns HTTP 200 with the shared `{ success: true, data }` envelope:
+
+```json
+{
+  "success": true,
+  "data": {
+    "metrics": { "totalOrders": 0, "pendingOrders": 0, "shippedOrders": 0, "totalRevenueCents": 0 },
+    "recentOrders": [],
+    "lowStockProducts": [],
+    "lowStockThreshold": 5,
+    "generatedAt": "2026-11-21T10:00:00.000Z"
+  }
+}
+```
+
+This example represents an empty database. Metrics cover **all** orders, independent of pagination. Pending means `PLACED`; shipped means `SHIPPED`. Revenue sums stored order totals for `PLACED`, `PACKED`, and `SHIPPED` orders; `CANCELLED` contributes zero. All sections share one read transaction, with no inventory mutations or schema changes.
+
+`recentOrders` has at most five `{ id, reference, status, totalCents, itemCount, createdAt }` records, ordered by creation date descending then ID descending. `itemCount` is the sum of quantities (total units); totals retain historical order prices. `lowStockProducts` contains `{ id, name, sku, stock }` records at or below the configured threshold, including zero stock, sorted by stock then ID ascending. `generatedAt` and order timestamps are ISO strings. Monetary fields are integer paise. Unsafe aggregate values fail with the standard safe HTTP 500 error instead of returning rounded money. Invalid server configuration or database failures also return HTTP 500 `INTERNAL_SERVER_ERROR`.
+
+The browser validates the response through `src/lib/api-client.ts` before caching it with TanStack Query. Dashboard data refreshes every minute while active, when stale on window focus, and through Refresh. Stale cache time is 30 seconds and failed reads retry once. Loading uses skeletons; errors hide previous figures and show retry controls with a Sonner notification. Empty arrays get dedicated empty states. Currency is formatted as INR, and displayed dates/times use `Asia/Kolkata` (IST). Quick actions link to the existing placeholder pages.
 
 ### GET /api/products
 
@@ -510,7 +559,7 @@ An existing product with no movements returns 200 with an empty array and zero c
 - Cancellation allows only `PLACED`/`PACKED` to become `CANCELLED`, adding quantities to current stock and recording `ORDER_CANCELLED` once per order/product.
 - Immediate locking, conditional updates, and unique movement keys protect concurrent mutations. Timeouts return 409 without partial changes; cancellation also guards stock overflow.
 - Cancellation preserves items, original movements, price snapshots, totals, references, and creation timestamps. Product price changes never alter previous orders.
-- GET endpoints never mutate stock or create movements. No manual stock adjustment, product mutation, order deletion, or frontend functionality is implemented.
+- GET endpoints never mutate stock or create movements. No manual stock adjustment, product mutation, order deletion, is implemented. Frontend feature pages remain placeholders.
 
 ## Testing and verification
 
@@ -537,8 +586,10 @@ For migration metadata consistency, run `node node_modules/drizzle-kit/bin.cjs c
 
 ## Submission and remaining issues
 
-All ten API methods, reproducible setup, persistent SQLite storage, and contract/business/integration tests are included. Keep migration files and the lockfile in the submission. Seed products are reproducible; databases and local environment files are excluded. README examples insert orders only if you execute their POST commands.
+All eleven API methods, reproducible setup, persistent SQLite storage, and contract/business/integration tests are included. Keep migration files and the lockfile in the submission. Seed products are reproducible; databases and local environment files are excluded. README examples insert orders only if you execute their POST commands.
 
 Backend finalization on November 21, 2026 executed 262 route/service/contract tests and 10 production HTTP integration tests (55 HTTP requests), all passing. The production build, strict TypeScript, formatting, migration consistency, and schema drift checks passed. Clean database setup, repeated seeding without inventory/price resets, application restart persistence, and 41 invalid-write constraint checks passed. Development database rows remained unchanged.
 
-The final dependency audit reports zero runtime findings and four moderate findings in Drizzle Kit's development-only esbuild chain. npm proposes a breaking downgrade, so working migration tooling is retained. A compatible upstream resolution remains outstanding. Authentication, custom CORS, frontend components, and general production hardening are outside the implemented hackathon scope.
+Step 10.1 frontend verification reran all 262 backend tests and all 10 production integration tests (55 HTTP requests); all passed and development database rows remained unchanged. The Webpack production build, strict TypeScript, and formatting passed. All six frontend routes returned 200, and `/` returned a 307 redirect to `/dashboard`. Browser checks covered desktop/sidebar persistence, phone and tablet layouts, mobile navigation, breadcrumbs, profile/notification menus, dialogs, keyboard dismissal, focus trapping, and focus restoration. Backend APIs, schema, services, and tests were not changed.
+
+The final dependency audit reports zero runtime findings and four moderate findings in Drizzle Kit's development-only esbuild chain. npm proposes a breaking downgrade, so working migration tooling is retained. A compatible upstream resolution remains outstanding. Authentication, custom CORS, frontend business workflows, and general production hardening are outside the implemented hackathon scope.

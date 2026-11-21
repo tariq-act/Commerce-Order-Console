@@ -6,6 +6,7 @@ import { join } from "node:path";
 import { after, before, describe, test } from "node:test";
 import { setTimeout as delay } from "node:timers/promises";
 import BetterSqlite3 from "better-sqlite3";
+import type { DashboardData } from "../../src/features/dashboard/types/dashboard";
 import type { Product } from "../../src/db/types";
 import type { ApiError, ApiSuccess } from "../../src/lib/api-response";
 import type { InventoryMovementPage, InventoryRecord } from "../../src/services/inventory.service";
@@ -397,6 +398,37 @@ describe("production HTTP backend audit", { concurrency: false }, () => {
     await failure("PATCH", `/api/orders/${fulfilled.id}/status`, 409, "INVALID_TRANSITION", {
       status: "PACKED",
     });
+    assert.deepEqual(snapshot(), before);
+  });
+
+  test("dashboard HTTP data matches database totals, recent units, and low-stock records without writes", async () => {
+    const before = snapshot();
+    const data = await success<DashboardData>("GET", "/api/dashboard");
+    const expected = inspection
+      .prepare(
+        "SELECT COUNT(*) totalOrders, COALESCE(SUM(status = 'PLACED'), 0) pendingOrders, COALESCE(SUM(status = 'SHIPPED'), 0) shippedOrders, COALESCE(SUM(CASE WHEN status <> 'CANCELLED' THEN total_cents ELSE 0 END), 0) totalRevenueCents FROM orders",
+      )
+      .get();
+    assert.deepEqual(data.metrics, expected);
+    assert.deepEqual(
+      data.recentOrders.map((order) => order.id),
+      inspection
+        .prepare("SELECT id FROM orders ORDER BY created_at DESC, id DESC LIMIT 5")
+        .all()
+        .map((row) => (row as { id: number }).id),
+    );
+    for (const order of data.recentOrders) {
+      const units = inspection
+        .prepare("SELECT COALESCE(SUM(quantity),0) total FROM order_items WHERE order_id = ?")
+        .get(order.id) as { total: number };
+      assert.equal(order.itemCount, units.total);
+    }
+    assert.deepEqual(
+      data.lowStockProducts,
+      inspection
+        .prepare("SELECT id, name, sku, stock FROM products WHERE stock <= ? ORDER BY stock, id")
+        .all(data.lowStockThreshold),
+    );
     assert.deepEqual(snapshot(), before);
   });
 
