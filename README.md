@@ -1,6 +1,6 @@
 # Commerce Order Console backend setup
 
-Steps 1 through 6 provide the SQLite schema, database infrastructure, repeatable product seeding, product REST APIs, transactional order creation, order listing/details, fulfilment, and cancellation for the Fynd Hiring Hackathon. The workspace was empty, so this project includes a minimal Next.js App Router configuration with strict TypeScript. Frontend components are deferred to later steps. The application can run and build with API routes only.
+Steps 1 through 7 provide the SQLite schema, database infrastructure, repeatable product seeding, product REST APIs, transactional order creation, order listing/details, fulfilment, cancellation, and read-only inventory/history APIs for the Fynd Hiring Hackathon. The workspace was empty, so this project includes a minimal Next.js App Router configuration with strict TypeScript. Frontend components are deferred to later steps. The application can run and build with API routes only.
 
 ## Setup and commands
 
@@ -164,6 +164,41 @@ Both endpoints return HTTP 200 with the shared success envelope. `data` contains
 Repeated or competing cancellation requests cannot restore stock twice: the status check rejects completed cancellation, the conditional update checks the expected status, and the existing unique order/product/movement-type index rejects duplicate records. Duplicate inserts are never silently ignored; they throw so the status change, all stock restorations, and all new movements roll back together. Any other failure has the same all-or-nothing behavior. Existing WAL mode and the five-second busy timeout are reused.
 
 `tests/order-transitions.test.ts` covers the full status-transition matrix, cancellation from both eligible states, forbidden/repeated requests, multi-item restoration, original history, invalid/nonexistent IDs, malformed payloads, stock overflow, unique constraints, writer-lock timeout, conditional-update failures, and failures after earlier items have been restored. `tests/helpers/order-transition-worker.ts` runs separate SQLite connections for simultaneous cancellations, duplicate fulfilment, and shipping versus cancellation. Every test uses a temporary database.
+
+## Inventory and movement history APIs
+
+| Endpoint                                                   | Behavior                                                                               |
+| ---------------------------------------------------------- | -------------------------------------------------------------------------------------- |
+| `GET /api/inventory`                                       | List all products with current stock, name, SKU, integer paise price, and availability |
+| `GET /api/inventory?search=mouse&stock=in_stock`           | Combine case-insensitive name/SKU search with current stock filtering                  |
+| `GET /api/inventory/[productId]`                           | Return one product's inventory details                                                 |
+| `GET /api/inventory/[productId]/movements?page=1&limit=20` | Return paginated stored movement history for one product                               |
+
+Inventory records contain `id`, `name`, `sku`, `priceCents`, `stock`, and `availability`. Availability is `in_stock` when stock is positive and `out_of_stock` when stock is zero. The list reuses product search/stock validation and queries: `search` accepts 1–200 characters after trimming and `stock` accepts `in_stock` or `out_of_stock`. The list returns the shared success envelope with an array in `data`; individual inventory returns a single record in `data` and does not accept query parameters.
+
+Example individual inventory response for a newly seeded mouse:
+
+```json
+{
+  "success": true,
+  "data": {
+    "id": 1,
+    "name": "Wireless Mouse",
+    "sku": "ACC-001",
+    "priceCents": 79900,
+    "stock": 25,
+    "availability": "in_stock"
+  }
+}
+```
+
+Movement responses contain `data.product`, `data.movements`, and `data.pagination`. The product is the current inventory record. Every movement includes its existing `id`, `productId`, `orderId`, `orderReference`, `type`, positive integer `quantity`, and ISO `createdAt`. `ORDER_PLACED` records represent deductions and `ORDER_CANCELLED` records represent restorations. Records are sorted by timestamp descending and then ID descending, using the original stored timestamps and movement IDs.
+
+Pagination accepts positive decimal integer `page` and `limit` parameters, defaults to page 1/limit 20, limits pages to at most 100 entries, and validates safe offsets. These rules are shared with order listing through `src/lib/validations/pagination.ts`. Existing products without movements return HTTP 200 with an empty array, `total: 0`, and `totalPages: 0`. Pages beyond the end are empty and retain the full matching count. Missing products return HTTP 404 for both detail and history endpoints. Invalid IDs, unknown/repeated query parameters, or invalid pagination return HTTP 400. Unexpected failures use safe HTTP 500 JSON.
+
+`src/services/inventory.service.ts` reuses the product service for current inventory and reads stored movements joined to orders for their references. History uses one read transaction for a consistent product/count/page snapshot. Current stock always comes from `products`, rather than being reconstructed from movement history. The endpoints never update stock or insert movement records and reuse the order placement/cancellation records already produced by the existing order service. No stock adjustment API is provided. All inventory routes use the Node.js runtime and `Cache-Control: no-store`.
+
+`tests/inventory.test.ts` uses a migrated, seeded temporary database and the existing order creation/cancellation services. Tests cover all inventory filters, details, placement/restoration movement values, references, newest-first ordering, pagination, invalid inputs, missing products, safe failures, and repeated reads. They also run all three inventory GET endpoints with SQLite writes disabled and compare every application row before and after to verify read-only behavior.
 
 ## Database modules
 
