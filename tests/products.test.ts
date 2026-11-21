@@ -8,7 +8,10 @@ import { migrate } from "drizzle-orm/better-sqlite3/migrator";
 import type { Database, Product } from "../src/db/types";
 import type { ApiError, ApiSuccess } from "../src/lib/api-response";
 
-type JsonProduct = Omit<Product, "createdAt" | "updatedAt"> & { createdAt: string; updatedAt: string };
+type JsonProduct = Omit<Product, "createdAt" | "updatedAt"> & {
+  createdAt: string;
+  updatedAt: string;
+};
 
 let db: Database;
 let list: typeof import("../src/app/api/products/route").GET;
@@ -24,7 +27,8 @@ before(async () => {
   const { migrationsPath } = await import("../src/db/config");
   migrate(db, { migrationsFolder: migrationsPath });
   execFileSync(process.execPath, ["--import", "tsx", "src/db/seed.ts"], {
-    env: { ...process.env }, stdio: "pipe",
+    env: { ...process.env },
+    stdio: "pipe",
   });
   ({ GET: list } = await import("../src/app/api/products/route"));
   ({ GET: detail } = await import("../src/app/api/products/[id]/route"));
@@ -46,7 +50,7 @@ async function listed(query = "") {
   assert.equal(response.status, 200);
   assert.match(response.headers.get("content-type") ?? "", /application\/json/);
   assert.equal(response.headers.get("cache-control"), "no-store");
-  const body = await response.json() as ApiSuccess<JsonProduct[]>;
+  const body = (await response.json()) as ApiSuccess<JsonProduct[]>;
   assert.equal(body.success, true);
   return body.data;
 }
@@ -59,14 +63,17 @@ async function fetched(id: string) {
 
 test("lists all six seeded products with integer paise and serialized timestamps", async () => {
   const data = await listed();
-  assert.deepEqual(data.map(({ sku, priceCents, stock }) => ({ sku, priceCents, stock })), [
-    { sku: "ACC-001", priceCents: 79900, stock: 25 },
-    { sku: "ACC-002", priceCents: 249900, stock: 10 },
-    { sku: "ACC-003", priceCents: 149900, stock: 15 },
-    { sku: "ACC-004", priceCents: 119900, stock: 8 },
-    { sku: "ACC-005", priceCents: 199900, stock: 0 },
-    { sku: "ACC-006", priceCents: 59900, stock: 30 },
-  ]);
+  assert.deepEqual(
+    data.map(({ sku, priceCents, stock }) => ({ sku, priceCents, stock })),
+    [
+      { sku: "ACC-001", priceCents: 79900, stock: 25 },
+      { sku: "ACC-002", priceCents: 249900, stock: 10 },
+      { sku: "ACC-003", priceCents: 149900, stock: 15 },
+      { sku: "ACC-004", priceCents: 119900, stock: 8 },
+      { sku: "ACC-005", priceCents: 199900, stock: 0 },
+      { sku: "ACC-006", priceCents: 59900, stock: 30 },
+    ],
+  );
   for (const product of data) {
     assert.ok(product.description.length > 0);
     assert.ok(Number.isSafeInteger(product.priceCents));
@@ -76,11 +83,17 @@ test("lists all six seeded products with integer paise and serialized timestamps
 });
 
 test("searches product names case-insensitively and trims whitespace", async () => {
-  assert.deepEqual((await listed("?search=%20mOuSe%20")).map((p) => p.sku), ["ACC-001"]);
+  assert.deepEqual(
+    (await listed("?search=%20mOuSe%20")).map((p) => p.sku),
+    ["ACC-001"],
+  );
 });
 
 test("searches full and partial SKUs case-insensitively", async () => {
-  assert.deepEqual((await listed("?search=acc-003")).map((p) => p.name), ["USB-C Hub"]);
+  assert.deepEqual(
+    (await listed("?search=acc-003")).map((p) => p.name),
+    ["USB-C Hub"],
+  );
   assert.equal((await listed("?search=acc-")).length, 6);
 });
 
@@ -99,8 +112,14 @@ test("filters the out-of-stock webcam", async () => {
 });
 
 test("combines name and SKU search with both stock filters using AND", async () => {
-  assert.deepEqual((await listed("?search=keyboard&stock=in_stock")).map((p) => p.sku), ["ACC-002"]);
-  assert.deepEqual((await listed("?search=acc-&stock=out_of_stock")).map((p) => p.sku), ["ACC-005"]);
+  assert.deepEqual(
+    (await listed("?search=keyboard&stock=in_stock")).map((p) => p.sku),
+    ["ACC-002"],
+  );
+  assert.deepEqual(
+    (await listed("?search=acc-&stock=out_of_stock")).map((p) => p.sku),
+    ["ACC-005"],
+  );
   assert.deepEqual(await listed("?search=webcam&stock=in_stock"), []);
   assert.deepEqual(await listed("?search=mouse&stock=out_of_stock"), []);
 });
@@ -121,7 +140,7 @@ test("fetches a valid product ID and matches the list representation", async () 
   const response = await fetched(String(product.id));
   assert.equal(response.status, 200);
   assert.equal(response.headers.get("cache-control"), "no-store");
-  const body = await response.json() as ApiSuccess<JsonProduct>;
+  const body = (await response.json()) as ApiSuccess<JsonProduct>;
   assert.deepEqual(body, { success: true, data: product });
 });
 
@@ -129,7 +148,8 @@ test("returns a consistent 404 response for a nonexistent product", async () => 
   const response = await fetched("999999");
   assert.equal(response.status, 404);
   assert.deepEqual(await response.json(), {
-    success: false, error: { code: "NOT_FOUND", message: "Product not found." },
+    success: false,
+    error: { code: "NOT_FOUND", message: "Product not found." },
   });
 });
 
@@ -137,7 +157,7 @@ for (const id of ["abc", "0", "-1", "1.5", "1e2", "Infinity", "9007199254740992"
   test(`rejects invalid product ID ${JSON.stringify(id)} with 400`, async () => {
     const response = await fetched(id);
     assert.equal(response.status, 400);
-    const body = await response.json() as ApiError;
+    const body = (await response.json()) as ApiError;
     assert.equal(body.success, false);
     assert.equal(body.error.code, "VALIDATION_ERROR");
     assert.equal(body.error.details?.[0].field, "id");
@@ -145,14 +165,21 @@ for (const id of ["abc", "0", "-1", "1.5", "1e2", "Infinity", "9007199254740992"
 }
 
 for (const query of [
-  "?stock=available", "?stock=", "?stock=IN_STOCK", "?search=", "?search=%20%20",
-  `?search=${"a".repeat(201)}`, "?unknown=value", "?__proto__=value",
-  "?search=mouse&search=hub", "?stock=in_stock&stock=out_of_stock",
+  "?stock=available",
+  "?stock=",
+  "?stock=IN_STOCK",
+  "?search=",
+  "?search=%20%20",
+  `?search=${"a".repeat(201)}`,
+  "?unknown=value",
+  "?__proto__=value",
+  "?search=mouse&search=hub",
+  "?stock=in_stock&stock=out_of_stock",
 ]) {
   test(`rejects invalid query ${query.slice(0, 65)} with 400`, async () => {
     const response = await list(request(query));
     assert.equal(response.status, 400);
-    const body = await response.json() as ApiError;
+    const body = (await response.json()) as ApiError;
     assert.equal(body.success, false);
     assert.equal(body.error.code, "VALIDATION_ERROR");
     assert.ok(body.error.details?.length);
@@ -162,7 +189,10 @@ for (const query of [
 test("reads current stock from SQLite on each request", async () => {
   db.$client.prepare("UPDATE products SET stock = 0 WHERE sku = 'ACC-001'").run();
   try {
-    assert.deepEqual((await listed("?search=mouse&stock=out_of_stock")).map((p) => p.sku), ["ACC-001"]);
+    assert.deepEqual(
+      (await listed("?search=mouse&stock=out_of_stock")).map((p) => p.sku),
+      ["ACC-001"],
+    );
     assert.deepEqual(await listed("?search=mouse&stock=in_stock"), []);
   } finally {
     db.$client.prepare("UPDATE products SET stock = 25 WHERE sku = 'ACC-001'").run();
@@ -171,7 +201,11 @@ test("reads current stock from SQLite on each request", async () => {
 
 test("product reads do not create orders, order items, or inventory movements", () => {
   for (const table of ["orders", "order_items", "inventory_movements"]) {
-    assert.equal((db.$client.prepare(`SELECT count(*) AS count FROM ${table}`).get() as { count: number }).count, 0);
+    assert.equal(
+      (db.$client.prepare(`SELECT count(*) AS count FROM ${table}`).get() as { count: number })
+        .count,
+      0,
+    );
   }
 });
 

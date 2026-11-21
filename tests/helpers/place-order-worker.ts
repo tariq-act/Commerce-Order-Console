@@ -6,9 +6,13 @@ import { db } from "../../src/db";
 const input = createInterface({ input: process.stdin });
 input.once("line", async (payload) => {
   try {
-    const response = await POST(new Request("http://localhost/api/orders", {
-      method: "POST", headers: { "Content-Type": "application/json" }, body: payload,
-    }));
+    const response = await POST(
+      new Request("http://localhost/api/orders", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: payload,
+      }),
+    );
     console.log(JSON.stringify({ status: response.status, body: await response.json() }));
   } catch (error) {
     console.error(error);

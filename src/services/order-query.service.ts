@@ -38,9 +38,18 @@ export function listOrders({ search, status, page, limit }: OrderQuery): OrderPa
   // Count and page share one read snapshot even if another connection writes.
   return db.transaction((tx) => {
     const total = tx.select({ total: count() }).from(orders).where(filter).get()?.total ?? 0;
-    const rows = tx.select(summaryFields).from(orders).where(filter)
-      .orderBy(desc(orders.createdAt), desc(orders.id)).limit(limit).offset((page - 1) * limit).all();
-    return { orders: rows, pagination: { page, limit, total, totalPages: Math.ceil(total / limit) } };
+    const rows = tx
+      .select(summaryFields)
+      .from(orders)
+      .where(filter)
+      .orderBy(desc(orders.createdAt), desc(orders.id))
+      .limit(limit)
+      .offset((page - 1) * limit)
+      .all();
+    return {
+      orders: rows,
+      pagination: { page, limit, total, totalPages: Math.ceil(total / limit) },
+    };
   });
 }
 
@@ -49,15 +58,20 @@ export function getOrderById(id: number): OrderDetails | undefined {
     const order = tx.select(summaryFields).from(orders).where(eq(orders.id, id)).get();
     if (!order) return undefined;
 
-    const items = tx.select({
-      id: orderItems.id,
-      productId: orderItems.productId,
-      productName: products.name,
-      sku: products.sku,
-      quantity: orderItems.quantity,
-      unitPriceCents: orderItems.unitPriceCents,
-    }).from(orderItems).innerJoin(products, eq(products.id, orderItems.productId))
-      .where(eq(orderItems.orderId, order.id)).orderBy(asc(orderItems.id)).all();
+    const items = tx
+      .select({
+        id: orderItems.id,
+        productId: orderItems.productId,
+        productName: products.name,
+        sku: products.sku,
+        quantity: orderItems.quantity,
+        unitPriceCents: orderItems.unitPriceCents,
+      })
+      .from(orderItems)
+      .innerJoin(products, eq(products.id, orderItems.productId))
+      .where(eq(orderItems.orderId, order.id))
+      .orderBy(asc(orderItems.id))
+      .all();
 
     return {
       ...order,

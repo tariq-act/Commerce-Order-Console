@@ -1,0 +1,9 @@
+node_modules/
+.next/
+out/
+coverage/
+data/
+*.tsbuildinfo
+package-lock.json
+next-env.d.ts
+src/db/migrations/

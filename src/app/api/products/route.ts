@@ -1,4 +1,8 @@
-import { successResponse, unexpectedErrorResponse, validationErrorResponse } from "../../../lib/api-response";
+import {
+  successResponse,
+  unexpectedErrorResponse,
+  validationErrorResponse,
+} from "../../../lib/api-response";
 import { validateProductQuery } from "../../../lib/validations/product";
 import { listProducts } from "../../../services/product.service";
 

@@ -1,5 +1,10 @@
 import { ZodError } from "zod";
-import { errorResponse, successResponse, unexpectedErrorResponse, validationErrorResponse } from "../../../../../lib/api-response";
+import {
+  errorResponse,
+  successResponse,
+  unexpectedErrorResponse,
+  validationErrorResponse,
+} from "../../../../../lib/api-response";
 import { OrderTransitionError, updateOrderStatus } from "../../../../../services/order.service";
 
 export const runtime = "nodejs";
@@ -13,7 +18,10 @@ export async function PATCH(request: Request, context: { params: Promise<{ id: s
       body = await request.json();
     } catch (error) {
       if (error instanceof SyntaxError) {
-        return errorResponse(400, { code: "VALIDATION_ERROR", message: "Request body must contain valid JSON." });
+        return errorResponse(400, {
+          code: "VALIDATION_ERROR",
+          message: "Request body must contain valid JSON.",
+        });
       }
       throw error;
     }

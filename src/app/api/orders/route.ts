@@ -1,4 +1,9 @@
-import { errorResponse, successResponse, unexpectedErrorResponse, validationErrorResponse } from "../../../lib/api-response";
+import {
+  errorResponse,
+  successResponse,
+  unexpectedErrorResponse,
+  validationErrorResponse,
+} from "../../../lib/api-response";
 import { ZodError } from "zod";
 import { createOrder, OrderPlacementError } from "../../../services/order.service";
 import { validateOrderQuery } from "../../../lib/validations/order";
@@ -14,7 +19,10 @@ export async function POST(request: Request) {
       body = await request.json();
     } catch (error) {
       if (error instanceof SyntaxError) {
-        return errorResponse(400, { code: "VALIDATION_ERROR", message: "Request body must contain valid JSON." });
+        return errorResponse(400, {
+          code: "VALIDATION_ERROR",
+          message: "Request body must contain valid JSON.",
+        });
       }
       throw error;
     }
@@ -22,7 +30,10 @@ export async function POST(request: Request) {
   } catch (error) {
     if (error instanceof ZodError) return validationErrorResponse(error, "body");
     if (error instanceof OrderPlacementError) {
-      return errorResponse(error.status, { code: error.code, message: error.message });
+      return errorResponse(error.status, {
+        code: error.code,
+        message: error.message,
+      });
     }
     return unexpectedErrorResponse(error);
   }

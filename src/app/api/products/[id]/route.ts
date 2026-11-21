@@ -1,4 +1,9 @@
-import { errorResponse, successResponse, unexpectedErrorResponse, validationErrorResponse } from "../../../../lib/api-response";
+import {
+  errorResponse,
+  successResponse,
+  unexpectedErrorResponse,
+  validationErrorResponse,
+} from "../../../../lib/api-response";
 import { productIdParamsSchema } from "../../../../lib/validations/product";
 import { getProductById } from "../../../../services/product.service";
 
